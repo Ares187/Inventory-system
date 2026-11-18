@@ -1,0 +1,67 @@
+
+import { NextRequest, NextResponse } from "next/server";
+import { getLoggedInEmployee } from "../../../lib/employee-session";
+import { generateLocallyExport } from "../../../lib/locally/export";
+
+export const dynamic = "force-dynamic";
+
+export async function GET(request: NextRequest) {
+  try {
+    const employee = await getLoggedInEmployee();
+
+    if (!employee) {
+      return NextResponse.json(
+        { error: "Not authenticated" },
+        { status: 401 }
+      );
+    }
+
+    if (employee.role !== "owner") {
+      return NextResponse.json(
+        { error: "Owner access required" },
+        { status: 403 }
+      );
+    }
+
+    const storeParam = request.nextUrl.searchParams.get("store");
+
+    if (!storeParam || !/^[1-9]\d*$/.test(storeParam)) {
+      return NextResponse.json(
+        { error: "A valid store ID is required" },
+        { status: 400 }
+      );
+    }
+
+    const storeId = Number(storeParam);
+
+    if (!Number.isSafeInteger(storeId)) {
+      return NextResponse.json(
+        { error: "Invalid store ID" },
+        { status: 400 }
+      );
+    }
+
+    const result = await generateLocallyExport(storeId);
+
+    return new NextResponse(result.csv, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="locally-store-${storeId}.csv"`,
+        "Cache-Control": "no-store",
+        "X-Locally-Product-Count": String(result.productCount),
+        "X-Locally-Excluded-Count": String(result.excludedCount),
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Export failed";
+
+    console.error("Locally export error:", error);
+
+    return NextResponse.json(
+      { error: message },
+      { status: 500 }
+    );
+  }
+}
