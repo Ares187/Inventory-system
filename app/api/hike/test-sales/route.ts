@@ -153,7 +153,7 @@ return NextResponse.json({
   outlets: Array.isArray(sales?.items)
   ? sales.items.map((outlet: any) => ({
       id: outlet.id,
-      fields: Object.keys(outlet),
+      name: outlet.title,
     }))
   : [],
   responseKeys: Object.keys(sales ?? {}),
