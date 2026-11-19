@@ -151,11 +151,11 @@ const firstVariant = variantProduct?.product_variants?.[0];
 return NextResponse.json({
   success: true,
   outlets: Array.isArray(sales?.items)
-    ? sales.items.map((outlet: any) => ({
-        id: outlet.id,
-        name: outlet.name,
-      }))
-    : [],
+  ? sales.items.map((outlet: any) => ({
+      id: outlet.id,
+      fields: Object.keys(outlet),
+    }))
+  : [],
   responseKeys: Object.keys(sales ?? {}),
 });
   } catch (error) {
