@@ -109,13 +109,37 @@ const lineItemFields =
         ? Object.keys(sales)
         : [];
 
-   return NextResponse.json({
+   const products = Array.isArray(sales?.items)
+  ? sales.items
+  : [];
+
+const sampleProducts = products.slice(0, 5).map((product: any) => ({
+  id: product.id,
+  parentId: product.parentId,
+  name: product.name,
+  sku: product.sku,
+  barcode: product.barcode,
+  brand: product.bran_name,
+  productType: product.product_type,
+  variantsCount: Array.isArray(product.product_variants)
+    ? product.product_variants.length
+    : null,
+  variantFields:
+    Array.isArray(product.product_variants) &&
+    product.product_variants.length > 0
+      ? Object.keys(product.product_variants[0])
+      : [],
+  outletFields:
+    Array.isArray(product.product_outlets) &&
+    product.product_outlets.length > 0
+      ? Object.keys(product.product_outlets[0])
+      : [],
+}));
+
+return NextResponse.json({
   success: true,
   totalCount: sales?.totalCount ?? null,
-  returnedCount: Array.isArray(sales?.items)
-    ? sales.items.length
-    : 0,
-  productFields,
+  sampleProducts,
 });
   } catch (error) {
     console.error("Hike sales test failed", error);
