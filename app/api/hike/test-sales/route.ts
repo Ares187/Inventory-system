@@ -77,6 +77,16 @@ const saleFields =
   firstSale && typeof firstSale === "object"
     ? Object.keys(firstSale)
     : [];
+    const lineItems = Array.isArray(firstSale?.invoiceLineItems)
+  ? firstSale.invoiceLineItems
+  : [];
+
+const firstLineItem = lineItems[0] ?? null;
+
+const lineItemFields =
+  firstLineItem && typeof firstLineItem === "object"
+    ? Object.keys(firstLineItem)
+    : [];
     // Server-side diagnostic only: avoid returning
     // customer details or entire sales records.
     const shape = Array.isArray(sales)
@@ -93,10 +103,8 @@ const saleFields =
     return NextResponse.json({
   success: true,
   totalCount: sales?.totalCount ?? null,
-  returnedCount: Array.isArray(sales?.items)
-    ? sales.items.length
-    : 0,
-  firstSaleFields: saleFields,
+  lineItemCount: lineItems.length,
+  lineItemFields,
 });
   } catch (error) {
     console.error("Hike sales test failed", error);
