@@ -1,6 +1,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
+import { encryptHikeToken } from "../../../../lib/hike-crypto";
 
 const REDIRECT_URI =
   "https://inventory-system-mu-rose.vercel.app/api/hike/callback";
@@ -64,10 +65,53 @@ export async function GET(request: NextRequest) {
 
   // Do not expose access or refresh tokens to the browser.
   // Secure token storage will be added before connecting.
+  
+  const tokens = await tokenResponse.json();
+
+  if (
+    typeof tokens.access_token !== "string" ||
+    !Number.isFinite(Number(tokens.expires_in)) ||
+    Number(tokens.expires_in) <= 0
+  ) {
+    return NextResponse.json(
+      { error: "Invalid token response from Hike" },
+      { status: 502 }
+    );
+  }
+
+  const supabase = getSupabaseAdmin();
+
+  const { error: databaseError } = await supabase
+    .from("hike_connections")
+    .upsert(
+      {
+        store_name: "Sneaker Factory",
+        access_token: encryptHikeToken(tokens.access_token),
+        refresh_token:
+          typeof tokens.refresh_token === "string"
+            ? encryptHikeToken(tokens.refresh_token)
+            : null,
+        expires_at: new Date(
+          Date.now() + Number(tokens.expires_in) * 1000
+        ).toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "store_name" }
+    );
+
+  if (databaseError) {
+    console.error("Failed to save Hike connection", databaseError.message);
+
+    return NextResponse.json(
+      { error: "Unable to save Hike connection" },
+      { status: 500 }
+    );
+  }
+
   const response = NextResponse.json({
-    message:
-      "Hike authorization succeeded. Secure token storage is not configured yet.",
+    message: "Hike connected successfully.",
   });
+
 
   response.cookies.delete("hike_oauth_state");
 
