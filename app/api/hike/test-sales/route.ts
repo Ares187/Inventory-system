@@ -103,8 +103,19 @@ const lineItemFields =
     return NextResponse.json({
   success: true,
   totalCount: sales?.totalCount ?? null,
-  lineItemCount: lineItems.length,
-  lineItemFields,
+  sample: {
+    outletId: firstSale?.outletId ?? null,
+    status: firstSale?.status ?? null,
+    paymentStatus: firstSale?.paymentStatus ?? null,
+    product: {
+      title: firstLineItem?.title ?? null,
+      sku: firstLineItem?.sku ?? null,
+      quantity: firstLineItem?.quantity ?? null,
+      refundedQuantity:
+        firstLineItem?.refundedQuantity ?? null,
+      actionType: firstLineItem?.actionType ?? null,
+    },
+  },
 });
   } catch (error) {
     console.error("Hike sales test failed", error);
