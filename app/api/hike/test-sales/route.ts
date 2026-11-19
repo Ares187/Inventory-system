@@ -38,7 +38,7 @@ export async function GET() {
       "https://api.hikeup.com/api/v1/products/get_all"
     );
 
-    url.searchParams.set("page_size", "5");
+    url.searchParams.set("page_size", "100");
 
     const hikeResponse = await fetch(url, {
       headers: {
@@ -113,8 +113,13 @@ const lineItemFields =
   ? sales.items
   : [];
 
-const sampleProducts = products.slice(0, 5).map((product: any) => ({
-  id: product.id,
+const sampleProducts = products
+  .filter((product: any) =>
+    Array.isArray(product.product_variants) &&
+    product.product_variants.length > 0
+  )
+  .slice(0, 5)
+  .map((product: any) => ({  id: product.id,
   parentId: product.parentId,
   name: product.name,
   sku: product.sku,
