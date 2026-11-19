@@ -104,7 +104,7 @@ if (
     cookieStore.set("sf_session", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      sameSite: "lax",
       path: "/",
       expires: expiresAt,
     });
