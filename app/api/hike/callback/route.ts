@@ -2,11 +2,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
 import { encryptHikeToken } from "../../../../lib/hike-crypto";
+import { getLoggedInEmployee } from "../../../../lib/employee-session";
 
 const REDIRECT_URI =
   "https://inventory-system-mu-rose.vercel.app/api/hike/callback";
 
 export async function GET(request: NextRequest) {
+    const employee = await getLoggedInEmployee();
+
+  if (!employee) {
+    return NextResponse.json(
+      { error: "You must be logged in" },
+      { status: 401 }
+    );
+  }
+
+  if (employee.role !== "owner") {
+    return NextResponse.json(
+      { error: "Only Owners can authorize Hike" },
+      { status: 403 }
+    );
+  }
   const code = request.nextUrl.searchParams.get("code");
   const state = request.nextUrl.searchParams.get("state");
   const savedState = request.cookies.get("hike_oauth_state")?.value;

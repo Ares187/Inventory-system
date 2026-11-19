@@ -1,8 +1,24 @@
 
 import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
+import { getLoggedInEmployee } from "../../../../lib/employee-session";
 
 export async function GET(request: Request) {
+    const employee = await getLoggedInEmployee();
+
+  if (!employee) {
+    return NextResponse.json(
+      { error: "You must be logged in" },
+      { status: 401 }
+    );
+  }
+
+  if (employee.role !== "owner") {
+    return NextResponse.json(
+      { error: "Only Owners can connect Hike" },
+      { status: 403 }
+    );
+  }
   const clientId = process.env.HIKE_CLIENT_ID;
 
   if (!clientId) {
