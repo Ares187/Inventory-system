@@ -35,7 +35,7 @@ export async function GET() {
     );
 
     const url = new URL(
-      "https://api.hikeup.com/api/v1/sales/get_all"
+      "https://api.hikeup.com/api/v1/products/get_all"
     );
 
     url.searchParams.set("page_size", "5");
@@ -68,6 +68,15 @@ export async function GET() {
     }
 
     const sales = await hikeResponse.json();
+    const firstProduct =
+  Array.isArray(sales?.items) && sales.items.length > 0
+    ? sales.items[0]
+    : null;
+
+const productFields =
+  firstProduct && typeof firstProduct === "object"
+    ? Object.keys(firstProduct)
+    : [];
     const firstSale =
   Array.isArray(sales?.items) && sales.items.length > 0
     ? sales.items[0]
@@ -100,22 +109,13 @@ const lineItemFields =
         ? Object.keys(sales)
         : [];
 
-    return NextResponse.json({
+   return NextResponse.json({
   success: true,
   totalCount: sales?.totalCount ?? null,
-  sample: {
-    outletId: firstSale?.outletId ?? null,
-    status: firstSale?.status ?? null,
-    paymentStatus: firstSale?.paymentStatus ?? null,
-    product: {
-      title: firstLineItem?.title ?? null,
-      sku: firstLineItem?.sku ?? null,
-      quantity: firstLineItem?.quantity ?? null,
-      refundedQuantity:
-        firstLineItem?.refundedQuantity ?? null,
-      actionType: firstLineItem?.actionType ?? null,
-    },
-  },
+  returnedCount: Array.isArray(sales?.items)
+    ? sales.items.length
+    : 0,
+  productFields,
 });
   } catch (error) {
     console.error("Hike sales test failed", error);
