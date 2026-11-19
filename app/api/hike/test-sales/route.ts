@@ -141,10 +141,35 @@ const sampleProducts = products
       : [],
 }));
 
+
+const variantProduct = products.find(
+  (product: any) =>
+    Array.isArray(product.product_variants) &&
+    product.product_variants.length > 0
+);
+
+const firstVariant = variantProduct?.product_variants?.[0];
 return NextResponse.json({
   success: true,
-  totalCount: sales?.totalCount ?? null,
-  sampleProducts,
+  product: {
+    id: variantProduct?.id ?? null,
+name: variantProduct?.name ?? null,
+sku: variantProduct?.sku ?? null,
+category: variantProduct?.product_type ?? null,
+  },
+  variant: firstVariant
+    ? {
+        id: firstVariant.prod_variant_id,
+        name: firstVariant.variant_name,
+        sku: firstVariant.sku,
+        barcode: firstVariant.barcode,
+        subValues: firstVariant.variant_sub_values,
+        outletFields: Array.isArray(firstVariant.variant_outlets)
+          && firstVariant.variant_outlets.length > 0
+            ? Object.keys(firstVariant.variant_outlets[0])
+            : [],
+      }
+    : null,
 });
   } catch (error) {
     console.error("Hike sales test failed", error);
