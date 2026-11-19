@@ -35,8 +35,7 @@ export async function GET() {
     );
 
     const url = new URL(
-      "https://api.hikeup.com/api/v1/products/get_all"
-    );
+"https://api.hikeup.com/api/v1/outlets/get_all"    );
 
     url.searchParams.set("page_size", "100");
 
@@ -151,25 +150,13 @@ const variantProduct = products.find(
 const firstVariant = variantProduct?.product_variants?.[0];
 return NextResponse.json({
   success: true,
-  product: {
-    id: variantProduct?.id ?? null,
-name: variantProduct?.name ?? null,
-sku: variantProduct?.sku ?? null,
-category: variantProduct?.product_type ?? null,
-  },
-  variant: firstVariant
-    ? {
-        id: firstVariant.prod_variant_id,
-        name: firstVariant.variant_name,
-        sku: firstVariant.sku,
-        barcode: firstVariant.barcode,
-        subValues: firstVariant.variant_sub_values,
-        outletFields: Array.isArray(firstVariant.variant_outlets)
-          && firstVariant.variant_outlets.length > 0
-            ? Object.keys(firstVariant.variant_outlets[0])
-            : [],
-      }
-    : null,
+  outlets: Array.isArray(sales?.items)
+    ? sales.items.map((outlet: any) => ({
+        id: outlet.id,
+        name: outlet.name,
+      }))
+    : [],
+  responseKeys: Object.keys(sales ?? {}),
 });
   } catch (error) {
     console.error("Hike sales test failed", error);
