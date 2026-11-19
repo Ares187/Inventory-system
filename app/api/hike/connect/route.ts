@@ -12,10 +12,8 @@ export async function GET(request: Request) {
     );
   }
 
-  const redirectUri = new URL(
-    "/api/hike/callback",
-    request.url
-  ).toString();
+  const redirectUri =
+  "https://inventory-system-mu-rose.vercel.app/api/hike/callback";
 
   const state = randomBytes(32).toString("hex");
 

@@ -1,5 +1,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
+import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
 
 const REDIRECT_URI =
   "https://inventory-system-mu-rose.vercel.app/api/hike/callback";
