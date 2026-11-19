@@ -68,7 +68,15 @@ export async function GET() {
     }
 
     const sales = await hikeResponse.json();
+    const firstSale =
+  Array.isArray(sales?.items) && sales.items.length > 0
+    ? sales.items[0]
+    : null;
 
+const saleFields =
+  firstSale && typeof firstSale === "object"
+    ? Object.keys(firstSale)
+    : [];
     // Server-side diagnostic only: avoid returning
     // customer details or entire sales records.
     const shape = Array.isArray(sales)
@@ -83,14 +91,13 @@ export async function GET() {
         : [];
 
     return NextResponse.json({
-      success: true,
-      message: "Connected to Hike sales API",
-      responseShape: shape,
-      topLevelKeys,
-      recordCount: Array.isArray(sales)
-        ? sales.length
-        : null,
-    });
+  success: true,
+  totalCount: sales?.totalCount ?? null,
+  returnedCount: Array.isArray(sales?.items)
+    ? sales.items.length
+    : 0,
+  firstSaleFields: saleFields,
+});
   } catch (error) {
     console.error("Hike sales test failed", error);
 
