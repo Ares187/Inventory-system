@@ -68,29 +68,63 @@ export async function GET() {
       connection.access_token
     );
 
-    const response = await fetch(
-  "https://api.hikeup.com/api/v1/sales/get_all?page_size=20&order_by=transactionDate&order_direction=desc",
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: "application/json",
-        },
-        cache: "no-store",
-      }
-    );
+    const hikeHeaders = {
+  Authorization: `Bearer ${accessToken}`,
+  Accept: "application/json",
+};
 
-    if (!response.ok) {
-      return NextResponse.json(
-        {
-          error: "Unable to retrieve Hike sales",
-          hikeStatus: response.status,
-        },
-        { status: 502 }
-      );
-    }
+// First request: retrieve the current total number of sales.
+const countResponse = await fetch(
+  "https://api.hikeup.com/api/v1/sales/get_all?page_size=1",
+  {
+    headers: hikeHeaders,
+    cache: "no-store",
+  }
+);
 
-    const result = await response.json();
+if (!countResponse.ok) {
+  return NextResponse.json(
+    {
+      error: "Unable to retrieve Hike sales count",
+      hikeStatus: countResponse.status,
+    },
+    { status: 502 }
+  );
+}
 
+const countResult = await countResponse.json();
+const totalSales = Number(countResult.totalCount);
+
+if (!Number.isSafeInteger(totalSales) || totalSales < 0) {
+  return NextResponse.json(
+    { error: "Invalid Hike sales count" },
+    { status: 502 }
+  );
+}
+
+// Second request: retrieve the newest 20 sales.
+const pageSize = 20;
+const skipCount = Math.max(0, totalSales - pageSize);
+
+const response = await fetch(
+  `https://api.hikeup.com/api/v1/sales/get_all?page_size=${pageSize}&skip_count=${skipCount}`,
+  {
+    headers: hikeHeaders,
+    cache: "no-store",
+  }
+);
+
+if (!response.ok) {
+  return NextResponse.json(
+    {
+      error: "Unable to retrieve recent Hike sales",
+      hikeStatus: response.status,
+    },
+    { status: 502 }
+  );
+}
+
+const result = await response.json();
     const sales = Array.isArray(result?.items)
       ? result.items
       : [];
