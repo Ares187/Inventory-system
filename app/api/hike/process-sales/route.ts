@@ -10,12 +10,25 @@ export async function GET() {
   try {
     const employee = await getLoggedInEmployee();
 
-    if (!employee || employee.role !== "owner") {
-      return NextResponse.json(
-        { error: "Owner access required" },
-        { status: 403 }
-      );
-    }
+   if (!employee) {
+  return NextResponse.json(
+    {
+      error: "No valid employee session",
+      diagnostic: "Session cookie missing, expired, or invalid",
+    },
+    { status: 401 }
+  );
+}
+
+if (employee.role !== "owner") {
+  return NextResponse.json(
+    {
+      error: "Owner access required",
+      detectedRole: employee.role,
+    },
+    { status: 403 }
+  );
+}
 
     const supabase = getSupabaseAdmin();
 
