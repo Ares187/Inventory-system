@@ -52,13 +52,32 @@ export function classifyHikeProduct(
   }
 
   // Clearly non-footwear categories.
+    // Clearly non-footwear categories.
+  const nonShoeCategories = [
+    "electronics",
+    "apparel",
+    "accessories",
+    "hydration",
+    "socks",
+    "insoles",
+    "laces",
+    "compression",
+    "hats",
+    "chews",
+    "nutrition",
+    "phone holders",
+    "anti-chafe",
+    "bags",
+    "gloves",
+    "headwear",
+    "bottles",
+    "belts",
+  ];
+
   if (
-    categoryText.includes("electronics") ||
-    categoryText.includes("apparel") ||
-    categoryText.includes("accessories") ||
-    categoryText.includes("hydration") ||
-    categoryText.includes("socks") ||
-    categoryText.includes("insoles")
+    nonShoeCategories.some((category) =>
+      categoryText.includes(category)
+    )
   ) {
     return {
       classification: "ignored",
@@ -66,7 +85,8 @@ export function classifyHikeProduct(
     };
   }
 
-  // Unknown categories should not be silently ignored.
+  // Unknown categories require review before they can
+  // be safely classified.
   return {
     classification: "unresolved",
     reason: "Unrecognized product category",

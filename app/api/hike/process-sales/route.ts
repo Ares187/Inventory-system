@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getLoggedInEmployee } from "../../../../lib/employee-session";
 import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
 import { decryptHikeToken } from "../../../../lib/hike-crypto";
+import { classifyHikeProduct } from "../../../../lib/hike-classification";
 
 export const dynamic = "force-dynamic";
 
@@ -128,7 +129,39 @@ const result = await response.json();
     const sales = Array.isArray(result?.items)
       ? result.items
       : [];
+    // Retrieve a sample of Hike products for classification testing.
+const productResponse = await fetch(
+  "https://api.hikeup.com/api/v1/products/get_all?page_size=100",
+  {
+    headers: hikeHeaders,
+    cache: "no-store",
+  }
+);
 
+if (!productResponse.ok) {
+  return NextResponse.json(
+    {
+      error: "Unable to retrieve Hike products",
+      hikeStatus: productResponse.status,
+    },
+    { status: 502 }
+  );
+}
+
+const productResult = await productResponse.json();
+
+const products = Array.isArray(productResult?.items)
+  ? productResult.items
+  : [];
+
+// Test classification against actual Hike product categories.
+const classificationSamples = products.slice(0, 20).map(
+  (product: any) => ({
+    name: product.name,
+    category: product.product_type,
+    ...classifyHikeProduct(product),
+  })
+);
     const saleItems = sales.flatMap((sale: any) =>
       (Array.isArray(sale.invoiceLineItems)
         ? sale.invoiceLineItems
@@ -164,6 +197,7 @@ newestSaleDate: sales.length
   : null,
       sampleItems: saleItems.slice(0, 5),
       inventoryChanged: false,
+      classificationSamples,
     });
   } catch (error) {
     console.error("Hike sales processor error:", error);
