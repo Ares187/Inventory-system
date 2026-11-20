@@ -8,27 +8,31 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const employee = await getLoggedInEmployee();
+    // Allow unauthenticated testing only in local development.
+    // Production still requires an Owner session.
+    if (process.env.NODE_ENV === "production") {
+      const employee = await getLoggedInEmployee();
 
-   if (!employee) {
-  return NextResponse.json(
-    {
-      error: "No valid employee session",
-      diagnostic: "Session cookie missing, expired, or invalid",
-    },
-    { status: 401 }
-  );
-}
+      if (!employee) {
+        return NextResponse.json(
+          {
+            error: "No valid employee session",
+            diagnostic: "Session cookie missing, expired, or invalid",
+          },
+          { status: 401 }
+        );
+      }
 
-if (employee.role !== "owner") {
-  return NextResponse.json(
-    {
-      error: "Owner access required",
-      detectedRole: employee.role,
-    },
-    { status: 403 }
-  );
-}
+      if (employee.role !== "owner") {
+        return NextResponse.json(
+          {
+            error: "Owner access required",
+            detectedRole: employee.role,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     const supabase = getSupabaseAdmin();
 
@@ -65,7 +69,7 @@ if (employee.role !== "owner") {
     );
 
     const response = await fetch(
-      "https://api.hikeup.com/api/v1/sales/get_all?page_size=20",
+  "https://api.hikeup.com/api/v1/sales/get_all?page_size=20&order_by=transactionDate&order_direction=desc",
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -117,7 +121,13 @@ if (employee.role !== "owner") {
       liveMode: settings.live_mode,
       salesCutoff: settings.sales_cutoff,
       salesRetrieved: sales.length,
-      lineItemsRetrieved: saleItems.length,
+lineItemsRetrieved: saleItems.length,
+oldestSaleDate: sales.length
+  ? sales[sales.length - 1].transactionDate
+  : null,
+newestSaleDate: sales.length
+  ? sales[0].transactionDate
+  : null,
       sampleItems: saleItems.slice(0, 5),
       inventoryChanged: false,
     });
