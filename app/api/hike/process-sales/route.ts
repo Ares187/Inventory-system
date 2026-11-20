@@ -4,13 +4,14 @@ import { getLoggedInEmployee } from "../../../../lib/employee-session";
 import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
 import { decryptHikeToken } from "../../../../lib/hike-crypto";
 import { classifyHikeProduct } from "../../../../lib/hike-classification";
+import { matchHikeSku } from "../../../../lib/hike-product-matching";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    // Allow unauthenticated testing only in local development.
-    // Production still requires an Owner session.
+    // Production requires an Owner session.
+    // Local development allows testing without login.
     if (process.env.NODE_ENV === "production") {
       const employee = await getLoggedInEmployee();
 
@@ -37,6 +38,7 @@ export async function GET() {
 
     const supabase = getSupabaseAdmin();
 
+    // Retrieve synchronization settings.
     const { data: settings, error: settingsError } =
       await supabase
         .from("hike_sync_settings")
@@ -51,6 +53,7 @@ export async function GET() {
       );
     }
 
+    // Retrieve encrypted Hike connection.
     const { data: connection, error: connectionError } =
       await supabase
         .from("hike_connections")
@@ -70,102 +73,110 @@ export async function GET() {
     );
 
     const hikeHeaders = {
-  Authorization: `Bearer ${accessToken}`,
-  Accept: "application/json",
-};
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    };
 
-// First request: retrieve the current total number of sales.
-const countResponse = await fetch(
-  "https://api.hikeup.com/api/v1/sales/get_all?page_size=1",
-  {
-    headers: hikeHeaders,
-    cache: "no-store",
-  }
-);
+    // STEP 1: Get the actual sales count.
+    const countResponse = await fetch(
+      "https://api.hikeup.com/api/v1/sales/get_all?page_size=1",
+      {
+        headers: hikeHeaders,
+        cache: "no-store",
+      }
+    );
 
-if (!countResponse.ok) {
-  return NextResponse.json(
-    {
-      error: "Unable to retrieve Hike sales count",
-      hikeStatus: countResponse.status,
-    },
-    { status: 502 }
-  );
-}
+    if (!countResponse.ok) {
+      return NextResponse.json(
+        {
+          error: "Unable to retrieve Hike sales count",
+          hikeStatus: countResponse.status,
+        },
+        { status: 502 }
+      );
+    }
 
-const countResult = await countResponse.json();
-const totalSales = Number(countResult.totalCount);
+    const countResult = await countResponse.json();
+    const totalSales = Number(countResult.totalCount);
 
-if (!Number.isSafeInteger(totalSales) || totalSales < 0) {
-  return NextResponse.json(
-    { error: "Invalid Hike sales count" },
-    { status: 502 }
-  );
-}
+    if (!Number.isSafeInteger(totalSales) || totalSales < 0) {
+      return NextResponse.json(
+        { error: "Invalid Hike sales count" },
+        { status: 502 }
+      );
+    }
 
-// Second request: retrieve the newest 20 sales.
-const pageSize = 20;
-const skipCount = Math.max(0, totalSales - pageSize);
+    // STEP 2: Retrieve the latest 20 sales.
+    const pageSize = 20;
+    const skipCount = Math.max(0, totalSales - pageSize);
 
-const response = await fetch(
-  `https://api.hikeup.com/api/v1/sales/get_all?page_size=${pageSize}&skip_count=${skipCount}`,
-  {
-    headers: hikeHeaders,
-    cache: "no-store",
-  }
-);
+    const response = await fetch(
+      `https://api.hikeup.com/api/v1/sales/get_all?page_size=${pageSize}&skip_count=${skipCount}`,
+      {
+        headers: hikeHeaders,
+        cache: "no-store",
+      }
+    );
 
-if (!response.ok) {
-  return NextResponse.json(
-    {
-      error: "Unable to retrieve recent Hike sales",
-      hikeStatus: response.status,
-    },
-    { status: 502 }
-  );
-}
+    if (!response.ok) {
+      return NextResponse.json(
+        {
+          error: "Unable to retrieve recent Hike sales",
+          hikeStatus: response.status,
+        },
+        { status: 502 }
+      );
+    }
 
-const result = await response.json();
+    const result = await response.json();
+
     const sales = Array.isArray(result?.items)
       ? result.items
       : [];
-    // Retrieve a sample of Hike products for classification testing.
-const productResponse = await fetch(
-  "https://api.hikeup.com/api/v1/products/get_all?page_size=100",
-  {
-    headers: hikeHeaders,
-    cache: "no-store",
-  }
-);
 
-if (!productResponse.ok) {
-  return NextResponse.json(
-    {
-      error: "Unable to retrieve Hike products",
-      hikeStatus: productResponse.status,
-    },
-    { status: 502 }
-  );
-}
+    // STEP 3: Test whether Hike supports direct SKU filtering.
+    // SKU 100693 corresponds to M Glycerin 23 in recent sales.
+    const requestedSku = "100693";
 
-const productResult = await productResponse.json();
+    const productResponse = await fetch(
+      `https://api.hikeup.com/api/v1/products/get_all?page_size=100&sku=${requestedSku}`,
+      {
+        headers: hikeHeaders,
+        cache: "no-store",
+      }
+    );
 
-const products = Array.isArray(productResult?.items)
-  ? productResult.items
-  : [];
+    if (!productResponse.ok) {
+      return NextResponse.json(
+        {
+          error: "Unable to retrieve Hike products",
+          hikeStatus: productResponse.status,
+        },
+        { status: 502 }
+      );
+    }
 
-// Test classification against actual Hike product categories.
-const classificationSamples = products.slice(0, 20).map(
-  (product: any) => ({
-    name: product.name,
-    category: product.product_type,
-    ...classifyHikeProduct(product),
-  })
-);
+    const productResult = await productResponse.json();
+
+    const products = Array.isArray(productResult?.items)
+      ? productResult.items
+      : [];
+
+    // STEP 4: Classify returned products.
+    const classificationSamples = products
+      .slice(0, 20)
+      .map((product: any) => ({
+        name: product.name,
+        category: product.product_type,
+        ...classifyHikeProduct(product),
+      }));
+
+    // STEP 5: Extract line items from recent sales.
     const saleItems = sales.flatMap((sale: any) =>
-      (Array.isArray(sale.invoiceLineItems)
-        ? sale.invoiceLineItems
-        : []
+      (
+        Array.isArray(sale.invoiceLineItems)
+          ? sale.invoiceLineItems
+          : []
       ).map((item: any) => ({
         saleId: sale.id,
         lineItemId: item.id,
@@ -181,22 +192,74 @@ const classificationSamples = products.slice(0, 20).map(
       }))
     );
 
+    // STEP 6: Return diagnostic results only.
+    // No database writes or inventory deductions.
     return NextResponse.json({
       success: true,
       mode: "read_only",
+
       syncEnabled: settings.enabled,
       liveMode: settings.live_mode,
       salesCutoff: settings.sales_cutoff,
+
       salesRetrieved: sales.length,
-lineItemsRetrieved: saleItems.length,
-oldestSaleDate: sales.length
-  ? sales[sales.length - 1].transactionDate
-  : null,
-newestSaleDate: sales.length
-  ? sales[0].transactionDate
-  : null,
+      lineItemsRetrieved: saleItems.length,
+
+      oldestSaleDate: sales.length
+        ? sales[sales.length - 1].transactionDate
+        : null,
+
+      newestSaleDate: sales.length
+        ? sales[0].transactionDate
+        : null,
+
       sampleItems: saleItems.slice(0, 5),
+
       inventoryChanged: false,
+
+      // Primary diagnostic for this test.
+      productLookupTest: {
+        requestedSku,
+        totalCount: productResult.totalCount,
+        returnedProducts: products.length,
+        firstFive: products.slice(0, 5).map(
+          (product: any) => ({
+            name: product.name,
+            sku: product.sku,
+          })
+        ),
+        exactParentSkuMatches: products
+          .filter(
+            (product: any) =>
+              String(product.sku ?? "").trim() ===
+              requestedSku
+          )
+          .length,
+        exactVariantSkuMatches: products.reduce(
+          (count: number, product: any) =>
+            count +
+            (
+              Array.isArray(product.product_variants)
+                ? product.product_variants
+                : []
+            ).filter(
+              (variant: any) =>
+                String(variant.sku ?? "").trim() ===
+                requestedSku
+            ).length,
+          0
+        ),
+      },
+
+      saleMatchSamples: saleItems
+        .slice(0, 10)
+        .map((item: any) => ({
+          saleId: item.saleId,
+          productName: item.productName,
+          sku: item.sku,
+          match: matchHikeSku(item.sku, products),
+        })),
+
       classificationSamples,
     });
   } catch (error) {
