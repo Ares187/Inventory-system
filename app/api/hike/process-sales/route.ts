@@ -107,7 +107,7 @@ export async function GET() {
     }
 
     // STEP 2: Retrieve the latest 20 sales.
-    const pageSize = 20;
+    const pageSize = 100;
     const skipCount = Math.max(0, totalSales - pageSize);
 
     const response = await fetch(
@@ -164,7 +164,7 @@ export async function GET() {
 
     // STEP 4: Classify returned products.
     const classificationSamples = products
-      .slice(0, 20)
+      .slice(0, 100)
       .map((product: any) => ({
         name: product.name,
         category: product.product_type,
@@ -186,12 +186,81 @@ export async function GET() {
         paymentStatus: sale.paymentStatus,
         productName: item.title,
         sku: item.sku,
+        invoiceItemValue: item.invoiceItemValue,
+        invoiceItemValueParent: item.invoiceItemValueParent,
+        invoiceExtraItemValueParent: item.invoiceExtraItemValueParent,
+        invoiceItemType: item.invoiceItemType,
+        invoiceLineSubItems: item.invoiceLineSubItems,
         quantity: item.quantity,
         refundedQuantity: item.refundedQuantity,
         actionType: item.actionType,
       }))
     );
+// STEP 6: Match Hike sale items against our imported product index.
+// Read-only: no inventory deductions or database writes.
+const variantIds = [
+  ...new Set(
+    saleItems
+      .map((item: any) => String(item.invoiceItemValue ?? ""))
+      .filter(Boolean)
+  ),
+];
 
+const skus = [
+  ...new Set(
+    saleItems
+      .map((item: any) => String(item.sku ?? "").trim())
+      .filter(Boolean)
+  ),
+];
+
+const { data: indexedVariants, error: indexError } = await supabase
+  .from("hike_product_index")
+  .select(
+    "hike_product_id,hike_variant_id,sku,product_name,variant_name,size,width,color,classification"
+  )
+  .in("hike_variant_id", variantIds);
+
+if (indexError) {
+  return NextResponse.json(
+    { error: "Unable to match indexed Hike variants", detail: indexError.message },
+    { status: 500 }
+  );
+}
+
+// Match by the actual Hike variant ID first.
+// Do not fall back to SKU alone: duplicate SKUs exist.
+const indexByVariantId = new Map(
+  (indexedVariants ?? []).map((record: any) => [
+    String(record.hike_variant_id),
+    record,
+  ])
+);
+
+const indexedSaleMatches = saleItems
+  .filter((item: any) =>
+    String(item.productName ?? "").toLowerCase().includes("clifton")
+  )
+  .map((item: any) => {
+    const variantId = String(item.invoiceItemValue ?? "");
+    const match = indexByVariantId.get(variantId);
+
+    return {
+      saleId: item.saleId,
+      lineItemId: item.lineItemId,
+      outletId: item.outletId,
+      productName: item.productName,
+      sku: item.sku,
+      hikeProductId: variantId,
+      matched: Boolean(match),
+      matchedModel: match?.product_name ?? null,
+      matchedVariant: match?.variant_name ?? null,
+      size: match?.size ?? null,
+      width: match?.width ?? null,
+      color: match?.color ?? null,
+      classification: match?.classification ?? null,
+    };
+  });
     // STEP 6: Return diagnostic results only.
     // No database writes or inventory deductions.
     return NextResponse.json({
@@ -213,9 +282,13 @@ export async function GET() {
         ? sales[0].transactionDate
         : null,
 
-      sampleItems: saleItems.slice(0, 5),
-
+sampleItems: saleItems.filter((item: any) =>
+  String(item.productName ?? "")
+    .toLowerCase()
+    .includes("clifton")
+),
       inventoryChanged: false,
+      indexedSaleMatches,
 
       // Primary diagnostic for this test.
       productLookupTest: {
