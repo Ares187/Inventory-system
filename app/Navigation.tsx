@@ -17,9 +17,10 @@ export default function Navigation({ role }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const links = [
-    { href: "/inventory", label: "Inventory" },
-    { href: "/inventory/receive", label: "Stock Management" },
-  ];
+  { href: "/inventory", label: "Inventory" },
+  { href: "/inventory/receive", label: "Stock Management" },
+  { href: "/inventory/pending-colors", label: "Pending Color Confirmation" },
+];
 
   if (
     role === "owner" ||
