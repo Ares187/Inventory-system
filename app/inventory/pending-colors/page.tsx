@@ -19,6 +19,12 @@ type Product = {
   color: string;
 };
 
+type InventoryRecord = {
+  store_id: number;
+  product_id: number;
+  quantity: number;
+};
+
 type PendingSale = {
   id: number;
   hike_sale_id: string;
@@ -31,10 +37,84 @@ type PendingSale = {
   width: string | null;
 };
 
+function normalize(value: unknown) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeGender(value: unknown) {
+  const gender = normalize(value);
+
+  if (["m", "men", "mens", "male"].includes(gender)) {
+    return "m";
+  }
+
+  if (["w", "women", "womens", "female"].includes(gender)) {
+    return "w";
+  }
+
+  return gender;
+}
+
+function matchesSale(sale: PendingSale, product: Product) {
+  if (!sale.size || !sale.width) return false;
+
+  if (normalize(sale.size) !== normalize(product.size)) {
+    return false;
+  }
+
+  if (normalize(sale.width) !== normalize(product.width)) {
+    return false;
+  }
+
+  const saleName = String(sale.product_name ?? "")
+    .replace(/\s*\/\s*.*$/, "")
+    .trim();
+
+  const genderMatch = saleName.match(
+    /^(M|W|Mens|Womens|Men's|Women's)\s+/i
+  );
+
+  if (!genderMatch) return false;
+
+  const saleGender = normalizeGender(genderMatch[1]);
+
+  if (saleGender !== normalizeGender(product.gender)) {
+    return false;
+  }
+
+  const nameWithoutGender = saleName
+    .replace(/^(M|W|Mens|Womens|Men's|Women's)\s+/i, "")
+    .trim();
+
+  const productName = [
+    product.brand,
+    product.model,
+    product.version,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const normalizedSaleName = normalize(nameWithoutGender);
+  const normalizedProductName = normalize(productName);
+
+  // Some inventory records include the brand in the model field.
+  const modelOnly = normalize(
+    `${product.model} ${product.version ?? ""}`
+  );
+
+  return (
+    normalizedSaleName === normalizedProductName ||
+    normalizedSaleName === modelOnly
+  );
+}
+
 export default function PendingColorsPage() {
   const [sales, setSales] = useState<PendingSale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
+  const [inventory, setInventory] = useState<InventoryRecord[]>([]);
   const [selected, setSelected] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -43,8 +123,12 @@ export default function PendingColorsPage() {
     async function load() {
       try {
         const [salesResponse, inventoryResponse] = await Promise.all([
-          fetch("/api/hike/pending-colors"),
-          fetch("/api/inventory"),
+          fetch("/api/hike/pending-colors", {
+            cache: "no-store",
+          }),
+          fetch("/api/inventory", {
+            cache: "no-store",
+          }),
         ]);
 
         if (!salesResponse.ok || !inventoryResponse.ok) {
@@ -57,9 +141,12 @@ export default function PendingColorsPage() {
         setSales(salesData.sales ?? []);
         setProducts(inventoryData.products ?? []);
         setStores(inventoryData.stores ?? []);
+        setInventory(inventoryData.inventory ?? []);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Unable to load data"
+          err instanceof Error
+            ? err.message
+            : "Unable to load pending sales"
         );
       } finally {
         setLoading(false);
@@ -69,15 +156,36 @@ export default function PendingColorsPage() {
     load();
   }, []);
 
+  function getStock(productId: number, storeId: string) {
+    const record = inventory.find(
+      (item) =>
+        String(item.product_id) === String(productId) &&
+        String(item.store_id) === String(storeId)
+    );
+
+    return Number(record?.quantity ?? 0);
+  }
+
   return (
-    <main style={{ maxWidth: 1050, margin: "35px auto", padding: 20 }}>
+    <main
+      style={{
+        maxWidth: 1050,
+        margin: "35px auto",
+        padding: 20,
+      }}
+    >
       <h1>Pending Color Confirmation</h1>
+
       <p style={{ color: "#64748b" }}>
-        Select the correct color for shoes purchased through Hike.
+        Select the color purchased through Hike.
+        Inventory deductions are currently disabled.
       </p>
 
       {loading && <p>Loading pending sales...</p>}
-      {error && <p style={{ color: "#dc2626" }}>{error}</p>}
+
+      {error && (
+        <p style={{ color: "#dc2626" }}>{error}</p>
+      )}
 
       {!loading && !error && sales.length === 0 && (
         <div
@@ -94,21 +202,13 @@ export default function PendingColorsPage() {
 
       {sales.map((sale) => {
         const store = stores.find(
-          (item) => String(item.id) === String(sale.hike_outlet_id)
+          (item) =>
+            String(item.id) === String(sale.hike_outlet_id)
         );
 
-        const matchingProducts = products.filter((product) => {
-          const productName =
-            `${product.gender === "M" ? "M" : product.gender === "W" ? "W" : product.gender} ${product.model} ${product.version ?? ""}`
-              .trim()
-              .toLowerCase();
-
-          return (
-            productName === String(sale.product_name ?? "").toLowerCase() &&
-            String(product.size) === String(sale.size) &&
-            String(product.width) === String(sale.width)
-          );
-        });
+        const matchingProducts = products.filter((product) =>
+          matchesSale(sale, product)
+        );
 
         return (
           <div
@@ -121,53 +221,86 @@ export default function PendingColorsPage() {
               marginTop: 18,
             }}
           >
-            <h3 style={{ marginTop: 0 }}>{sale.product_name}</h3>
+            <h3 style={{ marginTop: 0 }}>
+              {sale.product_name}
+            </h3>
 
             <p>
-              <strong>Store:</strong> {store?.name ?? "Unknown"}
+              <strong>Store:</strong>{" "}
+              {store?.name ?? "Unknown"}
               {" | "}
-              <strong>Size:</strong> {sale.size ?? "Unknown"}
+              <strong>Size:</strong>{" "}
+              {sale.size ?? "Unknown"}
               {" | "}
-              <strong>Width:</strong> {sale.width ?? "Unknown"}
+              <strong>Width:</strong>{" "}
+              {sale.width ?? "Unknown"}
               {" | "}
-              <strong>Quantity:</strong> {sale.quantity}
+              <strong>Quantity:</strong>{" "}
+              {sale.quantity}
             </p>
 
-            <label>
-              <strong>Color</strong>
-              <select
-                value={selected[sale.id] ?? ""}
-                onChange={(event) =>
-                  setSelected((previous) => ({
-                    ...previous,
-                    [sale.id]: Number(event.target.value),
-                  }))
-                }
-                style={{
-                  display: "block",
-                  width: "100%",
-                  maxWidth: 450,
-                  marginTop: 8,
-                  padding: 11,
-                  borderRadius: 7,
-                  border: "1px solid #cbd5e1",
-                }}
-              >
-                <option value="">Select color</option>
-                {matchingProducts.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.color}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <p style={{ color: "#64748b", fontSize: 13 }}>
+              Hike Sale #{sale.hike_sale_id}
+              {sale.sale_date &&
+                ` | ${new Date(sale.sale_date).toLocaleString()}`}
+            </p>
+
+            {matchingProducts.length === 0 ? (
+              <p style={{ color: "#b45309" }}>
+                No matching inventory variants found.
+                This sale will require manual resolution.
+              </p>
+            ) : (
+              <label>
+                <strong>Color</strong>
+
+                <select
+                  value={selected[sale.id] ?? ""}
+                  onChange={(event) =>
+                    setSelected((previous) => ({
+                      ...previous,
+                      [sale.id]: Number(event.target.value),
+                    }))
+                  }
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    maxWidth: 450,
+                    marginTop: 8,
+                    padding: 11,
+                    borderRadius: 7,
+                    border: "1px solid #cbd5e1",
+                  }}
+                >
+                  <option value="">Select color</option>
+
+                  {matchingProducts.map((product) => {
+                    const stock = getStock(
+                      product.id,
+                      sale.hike_outlet_id
+                    );
+
+                    return (
+                      <option
+                        key={product.id}
+                        value={product.id}
+                      >
+                        {product.color || "Unspecified"}
+                        {" — "}
+                        {stock} in stock
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            )}
 
             <button
               type="button"
               disabled={!selected[sale.id]}
               onClick={() =>
                 alert(
-                  "Color selection captured. Inventory deductions are not enabled yet."
+                  "Color selection captured for testing. No inventory was changed."
                 )
               }
               style={{
@@ -175,9 +308,13 @@ export default function PendingColorsPage() {
                 padding: "11px 18px",
                 border: "none",
                 borderRadius: 7,
-                background: selected[sale.id] ? "#2563eb" : "#94a3b8",
+                background: selected[sale.id]
+                  ? "#2563eb"
+                  : "#94a3b8",
                 color: "white",
-                cursor: selected[sale.id] ? "pointer" : "not-allowed",
+                cursor: selected[sale.id]
+                  ? "pointer"
+                  : "not-allowed",
               }}
             >
               Confirm Color
