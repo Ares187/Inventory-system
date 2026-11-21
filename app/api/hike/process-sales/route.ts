@@ -29,14 +29,23 @@ type HikeLineItem = {
 export async function GET() {
   try {
     // Only the owner can manually run synchronization.
-    const employee = await getLoggedInEmployee();
+    if (process.env.NODE_ENV === "production") {
+  const employee = await getLoggedInEmployee();
 
-    if (!employee || employee.role !== "owner") {
-      return NextResponse.json(
-        { error: "Owner access required" },
-        { status: 403 }
-      );
-    }
+  if (!employee) {
+    return NextResponse.json(
+      { error: "No valid employee session" },
+      { status: 401 }
+    );
+  }
+
+  if (employee.role !== "owner") {
+    return NextResponse.json(
+      { error: "Owner access required", detectedRole: employee.role },
+      { status: 403 }
+    );
+  }
+}
 
     const supabase = getSupabaseAdmin();
 
