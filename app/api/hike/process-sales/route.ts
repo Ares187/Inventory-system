@@ -3,57 +3,73 @@ import { NextResponse } from "next/server";
 import { getLoggedInEmployee } from "../../../../lib/employee-session";
 import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
 import { decryptHikeToken } from "../../../../lib/hike-crypto";
-import { classifyHikeProduct } from "../../../../lib/hike-classification";
-import { matchHikeSku } from "../../../../lib/hike-product-matching";
 
 export const dynamic = "force-dynamic";
 
+type HikeSale = {
+  id: string | number;
+  outletId?: string | number;
+  transactionDate?: string;
+  status?: number;
+  paymentStatus?: number;
+  invoiceLineItems?: HikeLineItem[];
+};
+
+type HikeLineItem = {
+  id: string | number;
+  title?: string;
+  sku?: string;
+  quantity?: number;
+  refundedQuantity?: number;
+  invoiceItemValue?: string | number;
+  invoiceItemValueParent?: string | number;
+  actionType?: number;
+};
+
 export async function GET() {
   try {
-    // Production requires an Owner session.
-    // Local development allows testing without login.
-    if (process.env.NODE_ENV === "production") {
-      const employee = await getLoggedInEmployee();
+    // Only the owner can manually run synchronization.
+    const employee = await getLoggedInEmployee();
 
-      if (!employee) {
-        return NextResponse.json(
-          {
-            error: "No valid employee session",
-            diagnostic: "Session cookie missing, expired, or invalid",
-          },
-          { status: 401 }
-        );
-      }
-
-      if (employee.role !== "owner") {
-        return NextResponse.json(
-          {
-            error: "Owner access required",
-            detectedRole: employee.role,
-          },
-          { status: 403 }
-        );
-      }
+    if (!employee || employee.role !== "owner") {
+      return NextResponse.json(
+        { error: "Owner access required" },
+        { status: 403 }
+      );
     }
 
     const supabase = getSupabaseAdmin();
 
-    // Retrieve synchronization settings.
     const { data: settings, error: settingsError } =
       await supabase
         .from("hike_sync_settings")
-        .select("enabled, live_mode, sales_cutoff")
+        .select("enabled,live_mode,sales_cutoff")
         .eq("id", 1)
         .single();
 
     if (settingsError || !settings) {
       return NextResponse.json(
-        { error: "Hike sync settings unavailable" },
+        { error: "Unable to retrieve synchronization settings" },
         { status: 500 }
       );
     }
 
-    // Retrieve encrypted Hike connection.
+    // Absolutely no recording without explicit activation.
+    const recordingEnabled =
+      settings.enabled === true &&
+      Boolean(settings.sales_cutoff);
+
+    const cutoff = settings.sales_cutoff
+      ? new Date(settings.sales_cutoff).getTime()
+      : null;
+
+    if (cutoff !== null && !Number.isFinite(cutoff)) {
+      return NextResponse.json(
+        { error: "Invalid sales cutoff timestamp" },
+        { status: 500 }
+      );
+    }
+
     const { data: connection, error: connectionError } =
       await supabase
         .from("hike_connections")
@@ -72,18 +88,15 @@ export async function GET() {
       connection.access_token
     );
 
-    const hikeHeaders = {
+    const headers = {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
     };
 
-    // STEP 1: Get the actual sales count.
+    // Get total number of Hike sales.
     const countResponse = await fetch(
       "https://api.hikeup.com/api/v1/sales/get_all?page_size=1",
-      {
-        headers: hikeHeaders,
-        cache: "no-store",
-      }
+      { headers, cache: "no-store" }
     );
 
     if (!countResponse.ok) {
@@ -106,234 +119,214 @@ export async function GET() {
       );
     }
 
-    // STEP 2: Retrieve the latest 20 sales.
+    // Retrieve the last 100 sales by pagination.
     const pageSize = 100;
     const skipCount = Math.max(0, totalSales - pageSize);
 
-    const response = await fetch(
+    const salesResponse = await fetch(
       `https://api.hikeup.com/api/v1/sales/get_all?page_size=${pageSize}&skip_count=${skipCount}`,
-      {
-        headers: hikeHeaders,
-        cache: "no-store",
-      }
+      { headers, cache: "no-store" }
     );
 
-    if (!response.ok) {
+    if (!salesResponse.ok) {
       return NextResponse.json(
         {
-          error: "Unable to retrieve recent Hike sales",
-          hikeStatus: response.status,
+          error: "Unable to retrieve Hike sales",
+          hikeStatus: salesResponse.status,
         },
         { status: 502 }
       );
     }
 
-    const result = await response.json();
+    const salesResult = await salesResponse.json();
 
-    const sales = Array.isArray(result?.items)
-      ? result.items
+    const sales: HikeSale[] = Array.isArray(salesResult.items)
+      ? salesResult.items
       : [];
 
-    // STEP 3: Test whether Hike supports direct SKU filtering.
-    // SKU 100693 corresponds to M Glycerin 23 in recent sales.
-    const requestedSku = "100693";
+    const eligibleItems: Array<{
+      hike_sale_id: string;
+      hike_line_item_id: string;
+      hike_outlet_id: string;
+      hike_product_id: string;
+      hike_variant_id: string;
+      product_name: string;
+      sku: string;
+      quantity: number;
+      sale_date: string;
+      status: "pending" | "unresolved";
+    }> = [];
 
-    const productResponse = await fetch(
-      `https://api.hikeup.com/api/v1/products/get_all?page_size=100&sku=${requestedSku}`,
-      {
-        headers: hikeHeaders,
-        cache: "no-store",
+    let skippedBeforeCutoff = 0;
+    let skippedRefunds = 0;
+    let skippedInvalid = 0;
+
+    for (const sale of sales) {
+      const saleTime = Date.parse(
+        String(sale.transactionDate ?? "")
+      );
+
+      if (!Number.isFinite(saleTime)) {
+        skippedInvalid++;
+        continue;
       }
-    );
 
-    if (!productResponse.ok) {
+      if (cutoff === null || saleTime <= cutoff) {
+        skippedBeforeCutoff++;
+        continue;
+      }
+
+      for (const item of sale.invoiceLineItems ?? []) {
+        const quantity = Number(item.quantity ?? 0);
+        const refundedQuantity = Number(
+          item.refundedQuantity ?? 0
+        );
+
+        // Refund handling stays manual in Feldryva.
+        if (refundedQuantity > 0 || quantity <= 0) {
+          skippedRefunds++;
+          continue;
+        }
+
+        if (
+          sale.id == null ||
+          item.id == null ||
+          !Number.isFinite(quantity)
+        ) {
+          skippedInvalid++;
+          continue;
+        }
+
+        eligibleItems.push({
+          hike_sale_id: String(sale.id),
+          hike_line_item_id: String(item.id),
+          hike_outlet_id: String(sale.outletId ?? ""),
+          hike_product_id: String(
+            item.invoiceItemValueParent ??
+              item.invoiceItemValue ??
+              ""
+          ),
+          hike_variant_id: String(
+            item.invoiceItemValue ?? ""
+          ),
+          product_name: String(item.title ?? ""),
+          sku: String(item.sku ?? ""),
+          quantity,
+          sale_date: String(sale.transactionDate),
+          status: "pending",
+        });
+      }
+    }
+
+    // Read-only until explicitly activated.
+    if (!recordingEnabled) {
+      return NextResponse.json({
+        success: true,
+        mode: "read_only",
+        syncEnabled: settings.enabled,
+        liveMode: settings.live_mode,
+        salesCutoff: settings.sales_cutoff,
+        salesRetrieved: sales.length,
+        eligibleItems: eligibleItems.length,
+        skippedBeforeCutoff,
+        skippedRefunds,
+        skippedInvalid,
+        inventoryChanged: false,
+        recordsWritten: 0,
+      });
+    }
+
+    const variantIds = [
+      ...new Set(
+        eligibleItems
+          .map((item) => item.hike_variant_id)
+          .filter(Boolean)
+      ),
+    ];
+
+    const { data: indexedVariants, error: indexError } =
+      variantIds.length
+        ? await supabase
+            .from("hike_product_index")
+            .select(
+              "hike_product_id,hike_variant_id,product_name,variant_name,size,width,classification"
+            )
+            .in("hike_variant_id", variantIds)
+        : { data: [], error: null };
+
+    if (indexError) {
       return NextResponse.json(
-        {
-          error: "Unable to retrieve Hike products",
-          hikeStatus: productResponse.status,
-        },
-        { status: 502 }
+        { error: indexError.message },
+        { status: 500 }
       );
     }
 
-    const productResult = await productResponse.json();
-
-    const products = Array.isArray(productResult?.items)
-      ? productResult.items
-      : [];
-
-    // STEP 4: Classify returned products.
-    const classificationSamples = products
-      .slice(0, 100)
-      .map((product: any) => ({
-        name: product.name,
-        category: product.product_type,
-        ...classifyHikeProduct(product),
-      }));
-
-    // STEP 5: Extract line items from recent sales.
-    const saleItems = sales.flatMap((sale: any) =>
-      (
-        Array.isArray(sale.invoiceLineItems)
-          ? sale.invoiceLineItems
-          : []
-      ).map((item: any) => ({
-        saleId: sale.id,
-        lineItemId: item.id,
-        outletId: sale.outletId,
-        transactionDate: sale.transactionDate,
-        saleStatus: sale.status,
-        paymentStatus: sale.paymentStatus,
-        productName: item.title,
-        sku: item.sku,
-        invoiceItemValue: item.invoiceItemValue,
-        invoiceItemValueParent: item.invoiceItemValueParent,
-        invoiceExtraItemValueParent: item.invoiceExtraItemValueParent,
-        invoiceItemType: item.invoiceItemType,
-        invoiceLineSubItems: item.invoiceLineSubItems,
-        quantity: item.quantity,
-        refundedQuantity: item.refundedQuantity,
-        actionType: item.actionType,
-      }))
+    const variantIndex = new Map(
+      (indexedVariants ?? []).map((variant) => [
+        String(variant.hike_variant_id),
+        variant,
+      ])
     );
-// STEP 6: Match Hike sale items against our imported product index.
-// Read-only: no inventory deductions or database writes.
-const variantIds = [
-  ...new Set(
-    saleItems
-      .map((item: any) => String(item.invoiceItemValue ?? ""))
-      .filter(Boolean)
-  ),
-];
 
-const skus = [
-  ...new Set(
-    saleItems
-      .map((item: any) => String(item.sku ?? "").trim())
-      .filter(Boolean)
-  ),
-];
+    const records = eligibleItems.map((item) => {
+      const match = variantIndex.get(item.hike_variant_id);
 
-const { data: indexedVariants, error: indexError } = await supabase
-  .from("hike_product_index")
-  .select(
-    "hike_product_id,hike_variant_id,sku,product_name,variant_name,size,width,color,classification"
-  )
-  .in("hike_variant_id", variantIds);
+      const validShoe =
+        match?.classification === "shoe" &&
+        Boolean(match.size) &&
+        Boolean(match.width);
 
-if (indexError) {
-  return NextResponse.json(
-    { error: "Unable to match indexed Hike variants", detail: indexError.message },
-    { status: 500 }
-  );
-}
+      return {
+        ...item,
+        status: validShoe ? "pending" : "unresolved",
+      };
+    });
 
-// Match by the actual Hike variant ID first.
-// Do not fall back to SKU alone: duplicate SKUs exist.
-const indexByVariantId = new Map(
-  (indexedVariants ?? []).map((record: any) => [
-    String(record.hike_variant_id),
-    record,
-  ])
-);
+    if (records.length === 0) {
+      return NextResponse.json({
+        success: true,
+        mode: "recording",
+        salesRetrieved: sales.length,
+        eligibleItems: 0,
+        recordsWritten: 0,
+        inventoryChanged: false,
+      });
+    }
 
-const indexedSaleMatches = saleItems
-  .filter((item: any) =>
-    String(item.productName ?? "").toLowerCase().includes("clifton")
-  )
-  .map((item: any) => {
-    const variantId = String(item.invoiceItemValue ?? "");
-    const match = indexByVariantId.get(variantId);
+    // Unique constraint on (hike_sale_id, hike_line_item_id)
+    // prevents duplicate records across repeated syncs.
+    const { data: written, error: writeError } =
+      await supabase
+        .from("hike_sale_items")
+        .upsert(records, {
+          onConflict: "hike_sale_id,hike_line_item_id",
+          ignoreDuplicates: true,
+        })
+        .select("id,status");
 
-    return {
-      saleId: item.saleId,
-      lineItemId: item.lineItemId,
-      outletId: item.outletId,
-      productName: item.productName,
-      sku: item.sku,
-      hikeProductId: variantId,
-      matched: Boolean(match),
-      matchedModel: match?.product_name ?? null,
-      matchedVariant: match?.variant_name ?? null,
-      size: match?.size ?? null,
-      width: match?.width ?? null,
-      color: match?.color ?? null,
-      classification: match?.classification ?? null,
-    };
-  });
-    // STEP 6: Return diagnostic results only.
-    // No database writes or inventory deductions.
+    if (writeError) {
+      return NextResponse.json(
+        { error: writeError.message },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({
       success: true,
-      mode: "read_only",
-
+      mode: "recording",
       syncEnabled: settings.enabled,
       liveMode: settings.live_mode,
       salesCutoff: settings.sales_cutoff,
-
       salesRetrieved: sales.length,
-      lineItemsRetrieved: saleItems.length,
-
-      oldestSaleDate: sales.length
-        ? sales[sales.length - 1].transactionDate
-        : null,
-
-      newestSaleDate: sales.length
-        ? sales[0].transactionDate
-        : null,
-
-sampleItems: saleItems.filter((item: any) =>
-  String(item.productName ?? "")
-    .toLowerCase()
-    .includes("clifton")
-),
+      eligibleItems: eligibleItems.length,
+      recordsWritten: written?.length ?? 0,
+      pendingRecorded:
+        written?.filter((item) => item.status === "pending")
+          .length ?? 0,
+      unresolvedRecorded:
+        written?.filter((item) => item.status === "unresolved")
+          .length ?? 0,
       inventoryChanged: false,
-      indexedSaleMatches,
-
-      // Primary diagnostic for this test.
-      productLookupTest: {
-        requestedSku,
-        totalCount: productResult.totalCount,
-        returnedProducts: products.length,
-        firstFive: products.slice(0, 5).map(
-          (product: any) => ({
-            name: product.name,
-            sku: product.sku,
-          })
-        ),
-        exactParentSkuMatches: products
-          .filter(
-            (product: any) =>
-              String(product.sku ?? "").trim() ===
-              requestedSku
-          )
-          .length,
-        exactVariantSkuMatches: products.reduce(
-          (count: number, product: any) =>
-            count +
-            (
-              Array.isArray(product.product_variants)
-                ? product.product_variants
-                : []
-            ).filter(
-              (variant: any) =>
-                String(variant.sku ?? "").trim() ===
-                requestedSku
-            ).length,
-          0
-        ),
-      },
-
-      saleMatchSamples: saleItems
-        .slice(0, 10)
-        .map((item: any) => ({
-          saleId: item.saleId,
-          productName: item.productName,
-          sku: item.sku,
-          match: matchHikeSku(item.sku, products),
-        })),
-
-      classificationSamples,
     });
   } catch (error) {
     console.error("Hike sales processor error:", error);
