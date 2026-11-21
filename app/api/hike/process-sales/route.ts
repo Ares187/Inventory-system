@@ -6,15 +6,6 @@ import { decryptHikeToken } from "../../../../lib/hike-crypto";
 
 export const dynamic = "force-dynamic";
 
-type HikeSale = {
-  id: string | number;
-  outletId?: string | number;
-  transactionDate?: string;
-  status?: number;
-  paymentStatus?: number;
-  invoiceLineItems?: HikeLineItem[];
-};
-
 type HikeLineItem = {
   id: string | number;
   title?: string;
@@ -26,26 +17,52 @@ type HikeLineItem = {
   actionType?: number;
 };
 
+type HikeSale = {
+  id: string | number;
+  outletId?: string | number;
+  transactionDate?: string;
+  status?: number;
+  paymentStatus?: number;
+  invoiceLineItems?: HikeLineItem[];
+};
+
+type SaleRecord = {
+  hike_sale_id: string;
+  hike_line_item_id: string;
+  hike_outlet_id: string;
+  hike_product_id: string;
+  hike_variant_id: string;
+  product_name: string;
+  sku: string;
+  quantity: number;
+  sale_date: string;
+  status: "pending" | "unresolved";
+};
+
 export async function GET() {
   try {
-    // Only the owner can manually run synchronization.
+    // Owner authentication in production.
+    // Local testing remains available without login.
     if (process.env.NODE_ENV === "production") {
-  const employee = await getLoggedInEmployee();
+      const employee = await getLoggedInEmployee();
 
-  if (!employee) {
-    return NextResponse.json(
-      { error: "No valid employee session" },
-      { status: 401 }
-    );
-  }
+      if (!employee) {
+        return NextResponse.json(
+          { error: "No valid employee session" },
+          { status: 401 }
+        );
+      }
 
-  if (employee.role !== "owner") {
-    return NextResponse.json(
-      { error: "Owner access required", detectedRole: employee.role },
-      { status: 403 }
-    );
-  }
-}
+      if (employee.role !== "owner") {
+        return NextResponse.json(
+          {
+            error: "Owner access required",
+            detectedRole: employee.role,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     const supabase = getSupabaseAdmin();
 
@@ -58,26 +75,28 @@ export async function GET() {
 
     if (settingsError || !settings) {
       return NextResponse.json(
-        { error: "Unable to retrieve synchronization settings" },
+        { error: "Unable to retrieve sync settings" },
         { status: 500 }
       );
     }
 
-    // Absolutely no recording without explicit activation.
-    const recordingEnabled =
-      settings.enabled === true &&
-      Boolean(settings.sales_cutoff);
-
     const cutoff = settings.sales_cutoff
-      ? new Date(settings.sales_cutoff).getTime()
+      ? Date.parse(settings.sales_cutoff)
       : null;
 
     if (cutoff !== null && !Number.isFinite(cutoff)) {
       return NextResponse.json(
-        { error: "Invalid sales cutoff timestamp" },
+        { error: "Invalid sales cutoff" },
         { status: 500 }
       );
     }
+
+    // Both switches must be enabled, and a cutoff
+    // must exist, before any records can be written.
+    const recordingEnabled =
+      settings.enabled === true &&
+      settings.live_mode === true &&
+      cutoff !== null;
 
     const { data: connection, error: connectionError } =
       await supabase
@@ -102,10 +121,13 @@ export async function GET() {
       Accept: "application/json",
     };
 
-    // Get total number of Hike sales.
+    // Retrieve the number of Hike sales.
     const countResponse = await fetch(
       "https://api.hikeup.com/api/v1/sales/get_all?page_size=1",
-      { headers, cache: "no-store" }
+      {
+        headers,
+        cache: "no-store",
+      }
     );
 
     if (!countResponse.ok) {
@@ -121,7 +143,10 @@ export async function GET() {
     const countResult = await countResponse.json();
     const totalSales = Number(countResult.totalCount);
 
-    if (!Number.isSafeInteger(totalSales) || totalSales < 0) {
+    if (
+      !Number.isSafeInteger(totalSales) ||
+      totalSales < 0
+    ) {
       return NextResponse.json(
         { error: "Invalid Hike sales count" },
         { status: 502 }
@@ -129,12 +154,19 @@ export async function GET() {
     }
 
     // Retrieve the last 100 sales by pagination.
+    // This is not yet a complete automatic polling system.
     const pageSize = 100;
-    const skipCount = Math.max(0, totalSales - pageSize);
+    const skipCount = Math.max(
+      0,
+      totalSales - pageSize
+    );
 
     const salesResponse = await fetch(
       `https://api.hikeup.com/api/v1/sales/get_all?page_size=${pageSize}&skip_count=${skipCount}`,
-      { headers, cache: "no-store" }
+      {
+        headers,
+        cache: "no-store",
+      }
     );
 
     if (!salesResponse.ok) {
@@ -149,24 +181,56 @@ export async function GET() {
 
     const salesResult = await salesResponse.json();
 
-    const sales: HikeSale[] = Array.isArray(salesResult.items)
+    const sales: HikeSale[] = Array.isArray(
+      salesResult.items
+    )
       ? salesResult.items
       : [];
 
-    const eligibleItems: Array<{
-      hike_sale_id: string;
-      hike_line_item_id: string;
-      hike_outlet_id: string;
-      hike_product_id: string;
-      hike_variant_id: string;
-      product_name: string;
-      sku: string;
-      quantity: number;
-      sale_date: string;
-      status: "pending" | "unresolved";
-    }> = [];
+    // Count all observed Hike status combinations.
+    const statusCounts = new Map<
+      string,
+      {
+        status: number | undefined;
+        paymentStatus: number | undefined;
+        count: number;
+      }
+    >();
+
+    for (const sale of sales) {
+      const key = `${sale.status}/${sale.paymentStatus}`;
+      const existing = statusCounts.get(key);
+
+      if (existing) {
+        existing.count++;
+      } else {
+        statusCounts.set(key, {
+          status: sale.status,
+          paymentStatus: sale.paymentStatus,
+          count: 1,
+        });
+      }
+    }
+
+    const saleStatusCounts = Array.from(
+      statusCounts.values()
+    );
+
+    const saleStatusSamples = sales
+      .slice(0, 20)
+      .map((sale) => ({
+        saleId: sale.id,
+        transactionDate: sale.transactionDate,
+        status: sale.status,
+        paymentStatus: sale.paymentStatus,
+        itemCount:
+          sale.invoiceLineItems?.length ?? 0,
+      }));
+
+    const eligibleItems: SaleRecord[] = [];
 
     let skippedBeforeCutoff = 0;
+    let skippedUnpaidOrIncomplete = 0;
     let skippedRefunds = 0;
     let skippedInvalid = 0;
 
@@ -180,54 +244,81 @@ export async function GET() {
         continue;
       }
 
+      // Never import historical sales.
       if (cutoff === null || saleTime <= cutoff) {
         skippedBeforeCutoff++;
         continue;
       }
 
-      for (const item of sale.invoiceLineItems ?? []) {
-        const quantity = Number(item.quantity ?? 0);
+      // Only provisionally accept status 2/payment 2.
+      // Other combinations are skipped, not deleted.
+      if (
+        sale.status !== 2 ||
+        sale.paymentStatus !== 2
+      ) {
+        skippedUnpaidOrIncomplete++;
+        continue;
+      }
+
+      if (
+        sale.id == null ||
+        sale.outletId == null ||
+        !Array.isArray(sale.invoiceLineItems)
+      ) {
+        skippedInvalid++;
+        continue;
+      }
+
+      for (const item of sale.invoiceLineItems) {
+        const quantity = Number(
+          item.quantity ?? 0
+        );
+
         const refundedQuantity = Number(
           item.refundedQuantity ?? 0
         );
 
-        // Refund handling stays manual in Feldryva.
-        if (refundedQuantity > 0 || quantity <= 0) {
+        // Refunds are handled manually in Feldryva.
+        if (refundedQuantity > 0) {
           skippedRefunds++;
           continue;
         }
 
         if (
-          sale.id == null ||
           item.id == null ||
-          !Number.isFinite(quantity)
+          !Number.isSafeInteger(quantity) ||
+          quantity <= 0
         ) {
           skippedInvalid++;
           continue;
         }
 
+        const productId = String(
+          item.invoiceItemValueParent ??
+            item.invoiceItemValue ??
+            ""
+        );
+
+        const variantId = String(
+          item.invoiceItemValue ?? ""
+        );
+
         eligibleItems.push({
           hike_sale_id: String(sale.id),
           hike_line_item_id: String(item.id),
-          hike_outlet_id: String(sale.outletId ?? ""),
-          hike_product_id: String(
-            item.invoiceItemValueParent ??
-              item.invoiceItemValue ??
-              ""
-          ),
-          hike_variant_id: String(
-            item.invoiceItemValue ?? ""
-          ),
+          hike_outlet_id: String(sale.outletId),
+          hike_product_id: productId,
+          hike_variant_id: variantId,
           product_name: String(item.title ?? ""),
           sku: String(item.sku ?? ""),
           quantity,
           sale_date: String(sale.transactionDate),
-          status: "pending",
+          status: "unresolved",
         });
       }
     }
 
-    // Read-only until explicitly activated.
+    // No database writes when synchronization is disabled.
     if (!recordingEnabled) {
       return NextResponse.json({
         success: true,
@@ -238,13 +329,18 @@ export async function GET() {
         salesRetrieved: sales.length,
         eligibleItems: eligibleItems.length,
         skippedBeforeCutoff,
+        skippedUnpaidOrIncomplete,
         skippedRefunds,
         skippedInvalid,
-        inventoryChanged: false,
+        saleStatusCounts,
+        saleStatusSamples,
         recordsWritten: 0,
+        inventoryChanged: false,
       });
     }
 
+    // Match using actual Hike variant IDs.
+    // Never use SKU alone because duplicate SKUs exist.
     const variantIds = [
       ...new Set(
         eligibleItems
@@ -254,7 +350,7 @@ export async function GET() {
     ];
 
     const { data: indexedVariants, error: indexError } =
-      variantIds.length
+      variantIds.length > 0
         ? await supabase
             .from("hike_product_index")
             .select(
@@ -265,29 +361,49 @@ export async function GET() {
 
     if (indexError) {
       return NextResponse.json(
-        { error: indexError.message },
+        {
+          error: "Unable to match Hike variants",
+          detail: indexError.message,
+        },
         { status: 500 }
       );
     }
 
     const variantIndex = new Map(
-      (indexedVariants ?? []).map((variant) => [
-        String(variant.hike_variant_id),
-        variant,
-      ])
+      (indexedVariants ?? [])
+        .filter(
+          (variant) =>
+            variant.hike_variant_id &&
+            variant.hike_variant_id !== ""
+        )
+        .map((variant) => [
+          String(variant.hike_variant_id),
+          variant,
+        ])
     );
 
+    // Parent-only sales do not have a complete variant.
+    // They remain unresolved until an employee identifies
+    // the correct shoe.
     const records = eligibleItems.map((item) => {
-      const match = variantIndex.get(item.hike_variant_id);
+      const match = variantIndex.get(
+        item.hike_variant_id
+      );
 
       const validShoe =
         match?.classification === "shoe" &&
         Boolean(match.size) &&
-        Boolean(match.width);
+        Boolean(match.width) &&
+        String(match.hike_product_id) ===
+          item.hike_product_id &&
+        String(match.hike_variant_id) !==
+          item.hike_product_id;
 
       return {
         ...item,
-        status: validShoe ? "pending" : "unresolved",
+        status: validShoe
+          ? ("pending" as const)
+          : ("unresolved" as const),
       };
     });
 
@@ -302,20 +418,24 @@ export async function GET() {
       });
     }
 
-    // Unique constraint on (hike_sale_id, hike_line_item_id)
-    // prevents duplicate records across repeated syncs.
+    // Prevent duplicate records using the existing
+    // unique constraint on sale ID and line-item ID.
     const { data: written, error: writeError } =
       await supabase
         .from("hike_sale_items")
         .upsert(records, {
-          onConflict: "hike_sale_id,hike_line_item_id",
+          onConflict:
+            "hike_sale_id,hike_line_item_id",
           ignoreDuplicates: true,
         })
         .select("id,status");
 
     if (writeError) {
       return NextResponse.json(
-        { error: writeError.message },
+        {
+          error: "Unable to record Hike sales",
+          detail: writeError.message,
+        },
         { status: 500 }
       );
     }
@@ -328,17 +448,27 @@ export async function GET() {
       salesCutoff: settings.sales_cutoff,
       salesRetrieved: sales.length,
       eligibleItems: eligibleItems.length,
+      skippedBeforeCutoff,
+      skippedUnpaidOrIncomplete,
+      skippedRefunds,
+      skippedInvalid,
+      saleStatusCounts,
       recordsWritten: written?.length ?? 0,
       pendingRecorded:
-        written?.filter((item) => item.status === "pending")
-          .length ?? 0,
+        written?.filter(
+          (item) => item.status === "pending"
+        ).length ?? 0,
       unresolvedRecorded:
-        written?.filter((item) => item.status === "unresolved")
-          .length ?? 0,
+        written?.filter(
+          (item) => item.status === "unresolved"
+        ).length ?? 0,
       inventoryChanged: false,
     });
   } catch (error) {
-    console.error("Hike sales processor error:", error);
+    console.error(
+      "Hike sales processor error:",
+      error
+    );
 
     return NextResponse.json(
       { error: "Unable to process Hike sales" },
