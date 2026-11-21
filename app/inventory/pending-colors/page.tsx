@@ -115,21 +115,34 @@ export default function PendingColorsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [inventory, setInventory] = useState<InventoryRecord[]>([]);
-  const [selected, setSelected] = useState<Record<number, number>>({});
+
+  const [selected, setSelected] = useState<
+    Record<number, number>
+  >({});
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const [confirming, setConfirming] = useState<number | null>(
+    null
+  );
+
+  const [message, setMessage] = useState<
+    Record<number, string>
+  >({});
 
   useEffect(() => {
     async function load() {
       try {
-        const [salesResponse, inventoryResponse] = await Promise.all([
-          fetch("/api/hike/pending-colors", {
-            cache: "no-store",
-          }),
-          fetch("/api/inventory", {
-            cache: "no-store",
-          }),
-        ]);
+        const [salesResponse, inventoryResponse] =
+          await Promise.all([
+            fetch("/api/hike/pending-colors", {
+              cache: "no-store",
+            }),
+            fetch("/api/inventory", {
+              cache: "no-store",
+            }),
+          ]);
 
         if (!salesResponse.ok || !inventoryResponse.ok) {
           throw new Error("Unable to load pending sales");
@@ -166,6 +179,85 @@ export default function PendingColorsPage() {
     return Number(record?.quantity ?? 0);
   }
 
+  async function confirmColor(saleId: number) {
+    const productId = selected[saleId];
+
+    if (!productId || confirming !== null) {
+      return;
+    }
+
+    setConfirming(saleId);
+
+    setMessage((previous) => ({
+      ...previous,
+      [saleId]: "",
+    }));
+
+    try {
+      const response = await fetch(
+        "/api/hike/confirm-color",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            saleItemId: saleId,
+            productId,
+          }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || "Unable to confirm color"
+        );
+      }
+
+      // Remove successfully processed sales from the queue.
+      setSales((previous) =>
+        previous.filter((sale) => sale.id !== saleId)
+      );
+
+      // Update displayed stock after successful deduction.
+      setInventory((previous) =>
+        previous.map((item) => {
+          const sale = sales.find(
+            (entry) => entry.id === saleId
+          );
+
+          if (
+            sale &&
+            String(item.product_id) === String(productId) &&
+            String(item.store_id) ===
+              String(sale.hike_outlet_id)
+          ) {
+            return {
+              ...item,
+              quantity:
+                Number(item.quantity) -
+                Number(sale.quantity),
+            };
+          }
+
+          return item;
+        })
+      );
+    } catch (err) {
+      setMessage((previous) => ({
+        ...previous,
+        [saleId]:
+          err instanceof Error
+            ? err.message
+            : "Unable to confirm color",
+      }));
+    } finally {
+      setConfirming(null);
+    }
+  }
+
   return (
     <main
       style={{
@@ -178,13 +270,17 @@ export default function PendingColorsPage() {
 
       <p style={{ color: "#64748b" }}>
         Select the color purchased through Hike.
-        Inventory deductions are currently disabled.
+        Test sales are protected from inventory deductions.
       </p>
 
-      {loading && <p>Loading pending sales...</p>}
+      {loading && (
+        <p>Loading pending sales...</p>
+      )}
 
       {error && (
-        <p style={{ color: "#dc2626" }}>{error}</p>
+        <p style={{ color: "#dc2626" }}>
+          {error}
+        </p>
       )}
 
       {!loading && !error && sales.length === 0 && (
@@ -203,12 +299,15 @@ export default function PendingColorsPage() {
       {sales.map((sale) => {
         const store = stores.find(
           (item) =>
-            String(item.id) === String(sale.hike_outlet_id)
+            String(item.id) ===
+            String(sale.hike_outlet_id)
         );
 
-        const matchingProducts = products.filter((product) =>
-          matchesSale(sale, product)
+        const matchingProducts = products.filter(
+          (product) => matchesSale(sale, product)
         );
+
+        const isConfirming = confirming === sale.id;
 
         return (
           <div
@@ -239,16 +338,24 @@ export default function PendingColorsPage() {
               {sale.quantity}
             </p>
 
-            <p style={{ color: "#64748b", fontSize: 13 }}>
+            <p
+              style={{
+                color: "#64748b",
+                fontSize: 13,
+              }}
+            >
               Hike Sale #{sale.hike_sale_id}
+
               {sale.sale_date &&
-                ` | ${new Date(sale.sale_date).toLocaleString()}`}
+                ` | ${new Date(
+                  sale.sale_date
+                ).toLocaleString()}`}
             </p>
 
             {matchingProducts.length === 0 ? (
               <p style={{ color: "#b45309" }}>
                 No matching inventory variants found.
-                This sale will require manual resolution.
+                This sale requires manual resolution.
               </p>
             ) : (
               <label>
@@ -256,10 +363,13 @@ export default function PendingColorsPage() {
 
                 <select
                   value={selected[sale.id] ?? ""}
+                  disabled={confirming !== null}
                   onChange={(event) =>
                     setSelected((previous) => ({
                       ...previous,
-                      [sale.id]: Number(event.target.value),
+                      [sale.id]: Number(
+                        event.target.value
+                      ),
                     }))
                   }
                   style={{
@@ -269,10 +379,13 @@ export default function PendingColorsPage() {
                     marginTop: 8,
                     padding: 11,
                     borderRadius: 7,
-                    border: "1px solid #cbd5e1",
+                    border:
+                      "1px solid #cbd5e1",
                   }}
                 >
-                  <option value="">Select color</option>
+                  <option value="">
+                    Select color
+                  </option>
 
                   {matchingProducts.map((product) => {
                     const stock = getStock(
@@ -285,7 +398,8 @@ export default function PendingColorsPage() {
                         key={product.id}
                         value={product.id}
                       >
-                        {product.color || "Unspecified"}
+                        {product.color ||
+                          "Unspecified"}
                         {" — "}
                         {stock} in stock
                       </option>
@@ -297,28 +411,46 @@ export default function PendingColorsPage() {
 
             <button
               type="button"
-              disabled={!selected[sale.id]}
+              disabled={
+                !selected[sale.id] ||
+                confirming !== null
+              }
               onClick={() =>
-                alert(
-                  "Color selection captured for testing. No inventory was changed."
-                )
+                confirmColor(sale.id)
               }
               style={{
                 marginTop: 16,
                 padding: "11px 18px",
                 border: "none",
                 borderRadius: 7,
-                background: selected[sale.id]
-                  ? "#2563eb"
-                  : "#94a3b8",
+                background:
+                  selected[sale.id] &&
+                  confirming === null
+                    ? "#2563eb"
+                    : "#94a3b8",
                 color: "white",
-                cursor: selected[sale.id]
-                  ? "pointer"
-                  : "not-allowed",
+                cursor:
+                  selected[sale.id] &&
+                  confirming === null
+                    ? "pointer"
+                    : "not-allowed",
               }}
             >
-              Confirm Color
+              {isConfirming
+                ? "Confirming..."
+                : "Confirm Color"}
             </button>
+
+            {message[sale.id] && (
+              <p
+                style={{
+                  color: "#dc2626",
+                  marginTop: 12,
+                }}
+              >
+                {message[sale.id]}
+              </p>
+            )}
           </div>
         );
       })}
