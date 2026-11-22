@@ -20,6 +20,7 @@ export default function Navigation({ role }: Props) {
   { href: "/inventory", label: "Inventory" },
   { href: "/inventory/receive", label: "Stock Management" },
   { href: "/inventory/pending-colors", label: "Pending Color Confirmation" },
+  { href: "/inventory/hike-review", label: "Hike Sales Review" },
 ];
 
   if (
