@@ -5,17 +5,41 @@ import { hikeFetch } from "../../../../lib/hike-auth";
 
 export const dynamic = "force-dynamic";
 
+type HikeLine = {
+  id?: string | number;
+  title?: string;
+  sku?: string;
+  barcode?: string;
+  quantity?: number;
+  invoiceItemValue?: {
+    id?: string | number;
+    productId?: string | number;
+    productVariantId?: string | number;
+  };
+  invoiceItemValueParent?: {
+    id?: string | number;
+    productId?: string | number;
+  };
+};
+
+type HikeSale = {
+  id: string | number;
+  outletId?: string | number;
+  transactionDate?: string;
+  status?: number;
+  paymentStatus?: number;
+  invoiceLineItems?: HikeLine[];
+};
+
 export async function GET() {
   try {
-    if (process.env.NODE_ENV === "production") {
-      const employee = await getLoggedInEmployee();
+    const employee = await getLoggedInEmployee();
 
-      if (!employee || employee.role !== "owner") {
-        return NextResponse.json(
-          { error: "Owner access required" },
-          { status: 403 }
-        );
-      }
+    if (!employee || employee.role !== "owner") {
+      return NextResponse.json(
+        { error: "Owner access required" },
+        { status: 403 }
+      );
     }
 
     const countResponse = await hikeFetch(
@@ -46,24 +70,30 @@ export async function GET() {
     }
 
     const data = await response.json();
-    const sales = Array.isArray(data.items)
+
+    const sales: HikeSale[] = Array.isArray(data.items)
       ? data.items
       : [];
 
     return NextResponse.json({
       success: true,
       totalSales: total,
-      sales: sales.map((sale: Record<string, unknown>) => ({
+      sales: sales.map((sale) => ({
         saleId: sale.id,
         outletId: sale.outletId ?? null,
         transactionDate: sale.transactionDate ?? null,
-        finalizeDate: sale.finalizeDate ?? null,
-        creationTime: sale.creationTime ?? null,
         status: sale.status,
         paymentStatus: sale.paymentStatus,
-        itemCount: Array.isArray(sale.invoiceLineItems)
-          ? sale.invoiceLineItems.length
-          : null
+        items: (sale.invoiceLineItems ?? []).map((line) => ({
+          lineId: line.id ?? null,
+          title: line.title ?? null,
+          sku: line.sku ?? null,
+          barcode: line.barcode ?? null,
+          quantity: line.quantity ?? null,
+          invoiceItemValue: line.invoiceItemValue ?? null,
+          invoiceItemValueParent:
+            line.invoiceItemValueParent ?? null
+        }))
       })),
       inventoryChanged: false
     });
@@ -74,7 +104,7 @@ export async function GET() {
         detail:
           error instanceof Error
             ? error.message
-            : "Unknown error"
+            : String(error)
       },
       { status: 500 }
     );
