@@ -392,23 +392,36 @@ export async function POST(request: Request) {
           | "excludedMerchandise"
           | "needsManualReview";
 
-        if (approved) {
-          category = "approvedShoes";
-        } else if (
-          classification.includes("shoe") ||
-          classification.includes("footwear") ||
-          classification.includes("running")
-        ) {
-          category = "missingCatalogShoes";
-        } else if (
-          classification.includes("accessory") ||
-          classification.includes("merchandise") ||
-          classification.includes("non-shoe")
-        ) {
-          category = "excludedMerchandise";
-        } else {
-          category = "needsManualReview";
-        }
+        
+const nonFootwearClassification =
+  classification.includes("non-shoe") ||
+  classification.includes("non shoe") ||
+  classification.includes("accessory") ||
+  classification.includes("apparel") ||
+  classification.includes("clothing") ||
+  classification.includes("nutrition") ||
+  classification.includes("electronics") ||
+  classification.includes("merchandise");
+
+const footwearClassification =
+  !nonFootwearClassification &&
+  (
+    classification.includes("footwear") ||
+    classification.includes("running shoe") ||
+    classification.includes("track spike") ||
+    classification.includes("racing spike")
+  );
+
+if (approved) {
+  category = "approvedShoes";
+} else if (nonFootwearClassification) {
+  category = "excludedMerchandise";
+} else if (footwearClassification) {
+  category = "missingCatalogShoes";
+} else {
+  category = "needsManualReview";
+}
+
 
         counts[category]++;
 
