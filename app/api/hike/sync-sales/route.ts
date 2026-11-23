@@ -30,8 +30,39 @@ type HikeResponse = {
   totalCount?: number;
 };
 
-function text(value: unknown): string {
+type CatalogRow = {
+  sku: string | null;
+  barcode: string | null;
+  classification: string | null;
+  hike_product_id: string | null;
+};
+
+type ProductRow = {
+  id: number;
+  upc: string | null;
+};
+
+function clean(value: unknown): string {
   return value == null ? "" : String(value).trim();
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function isExcludedClassification(value: string): boolean {
+  const c = value.toLowerCase();
+
+  return [
+    "non-shoe",
+    "non shoe",
+    "accessory",
+    "apparel",
+    "clothing",
+    "nutrition",
+    "electronics",
+    "merchandise"
+  ].some((term) => c.includes(term));
 }
 
 export async function POST(request: Request) {
@@ -65,11 +96,7 @@ export async function POST(request: Request) {
 
     if (settingsError) throw settingsError;
 
-    if (!settings.sales_cutoff) {
-      throw new Error("Sales cutoff is not configured");
-    }
-
-    const cutoff = new Date(settings.sales_cutoff).getTime();
+    const cutoff = Date.parse(settings.sales_cutoff ?? "");
 
     if (!Number.isFinite(cutoff)) {
       throw new Error("Invalid sales cutoff");
@@ -82,9 +109,9 @@ export async function POST(request: Request) {
 
     if (mappingError) throw mappingError;
 
-    const outlets = new Map(
+    const outlets = new Map<string, number>(
       (mappings ?? []).map((row) => [
-        String(row.hike_outlet_id),
+        clean(row.hike_outlet_id),
         Number(row.store_id)
       ])
     );
@@ -97,17 +124,36 @@ export async function POST(request: Request) {
 
     if (productError) throw productError;
 
-    const byUpc = new Map<string, number[]>();
+    const productsByUpc = new Map<string, number[]>();
 
-    for (const product of products ?? []) {
-      const upc = text(product.upc);
+    for (const product of (products ?? []) as ProductRow[]) {
+      const upc = clean(product.upc);
       if (!upc) continue;
 
-      byUpc.set(upc, [
-        ...(byUpc.get(upc) ?? []),
+      productsByUpc.set(upc, [
+        ...(productsByUpc.get(upc) ?? []),
         Number(product.id)
       ]);
     }
+
+    const { data: master, error: masterError } =
+      await supabase
+        .from("hike_shoe_master")
+        .select("hike_parent_id,parent_sku");
+
+    if (masterError) throw masterError;
+
+    const approvedParents = new Set(
+      (master ?? [])
+        .map((row) => clean(row.hike_parent_id))
+        .filter(Boolean)
+    );
+
+    const approvedSkus = new Set(
+      (master ?? [])
+        .map((row) => clean(row.parent_sku))
+        .filter(Boolean)
+    );
 
     const countResponse = await hikeFetch(
       "https://api.hikeup.com/api/v1/sales/get_all?page_size=1"
@@ -130,31 +176,12 @@ export async function POST(request: Request) {
 
     const pageSize = 100;
     const maxPages = 10;
+    const sales: HikeSale[] = [];
 
-    const counts = {
-      pagesChecked: 0,
-      salesChecked: 0,
-      eligibleSales: 0,
-      lineItemsChecked: 0,
-      uniqueUpcMatches: 0,
-      missingUpcMatches: 0,
-      ambiguousUpcMatches: 0,
-      unknownOutlets: 0,
-      skippedRefundedLines: 0
-    };
-
-    const samples: {
-      saleId: string;
-      title: string;
-      barcode: string;
-      storeId: number;
-      productId: number | null;
-      result: string;
-    }[] = [];
-
+    let pagesChecked = 0;
     let reachedCutoff = false;
+    let reachedBeginning = false;
 
-    // Fetch the newest pages first.
     for (let page = 0; page < maxPages; page++) {
       const skip = Math.max(
         0,
@@ -162,114 +189,225 @@ export async function POST(request: Request) {
       );
 
       const remaining = total - skip;
-      if (remaining <= 0) break;
+      if (remaining <= 0) {
+        reachedBeginning = true;
+        break;
+      }
 
-      const url =
+      const response = await hikeFetch(
         "https://api.hikeup.com/api/v1/sales/get_all" +
         `?page_size=${Math.min(pageSize, remaining)}` +
-        `&skip_count=${skip}`;
-
-      const response = await hikeFetch(url);
+        `&skip_count=${skip}`
+      );
 
       if (!response.ok) {
         throw new Error(
-          `Hike page request failed: ${response.status}`
+          `Hike page failed: ${response.status}`
         );
       }
 
       const payload: HikeResponse = await response.json();
-      const sales = payload.items ?? [];
+      const pageSales = payload.items ?? [];
 
-      counts.pagesChecked++;
-      counts.salesChecked += sales.length;
+      pagesChecked++;
+      sales.push(...pageSales);
 
-      if (sales.length === 0) break;
-
-      let pageHasRecentSale = false;
-
-      for (const sale of sales) {
-        const date = Date.parse(sale.transactionDate ?? "");
-
-        if (!Number.isFinite(date)) continue;
-        if (date < cutoff) continue;
-
-        pageHasRecentSale = true;
-
-        if (sale.status !== 2 || sale.paymentStatus !== 2) {
-          continue;
-        }
-
-        const outletId = text(sale.outletId);
-        const storeId = outlets.get(outletId);
-
-        if (!storeId || ![1, 2, 3].includes(storeId)) {
-          counts.unknownOutlets++;
-          continue;
-        }
-
-        counts.eligibleSales++;
-
-        for (const line of sale.invoiceLineItems ?? []) {
-          const quantity = Number(line.quantity ?? 0);
-          const refunded = Number(
-            line.refundedQuantity ?? 0
-          );
-
-          if (
-            !Number.isSafeInteger(quantity) ||
-            quantity <= 0 ||
-            !Number.isFinite(refunded) ||
-            refunded !== 0
-          ) {
-            counts.skippedRefundedLines++;
-            continue;
-          }
-
-          counts.lineItemsChecked++;
-
-          const barcode = text(line.barcode);
-          const matches = barcode
-            ? byUpc.get(barcode) ?? []
-            : [];
-
-          let result: string;
-          let productId: number | null = null;
-
-          if (matches.length === 1) {
-            counts.uniqueUpcMatches++;
-            productId = matches[0];
-            result = "unique_upc_match";
-          } else if (matches.length > 1) {
-            counts.ambiguousUpcMatches++;
-            result = "ambiguous_upc";
-          } else {
-            counts.missingUpcMatches++;
-            result = "missing_upc_match";
-          }
-
-          if (samples.length < 30) {
-            samples.push({
-              saleId: text(sale.id),
-              title: text(line.title),
-              barcode,
-              storeId,
-              productId,
-              result
-            });
-          }
-        }
+      if (pageSales.length === 0) {
+        break;
       }
 
-      // This is a provisional stopping rule.
-      // It assumes Hike's API pages are ordered by date.
-      if (!pageHasRecentSale) {
+      const dated = pageSales
+        .map((sale) =>
+          Date.parse(sale.transactionDate ?? "")
+        )
+        .filter(Number.isFinite);
+
+      // Stop only when the entire page is older than cutoff.
+      if (
+        dated.length === pageSales.length &&
+        dated.every((date) => date < cutoff)
+      ) {
         reachedCutoff = true;
         break;
       }
 
       if (skip === 0) {
-        reachedCutoff = true;
+        reachedBeginning = true;
         break;
+      }
+    }
+
+    const eligibleSales = sales.filter((sale) => {
+      const date = Date.parse(sale.transactionDate ?? "");
+
+      return (
+        sale.status === 2 &&
+        sale.paymentStatus === 2 &&
+        Number.isFinite(date) &&
+        date >= cutoff &&
+        [1, 2, 3].includes(
+          outlets.get(clean(sale.outletId)) ?? -1
+        )
+      );
+    });
+
+    const skus = unique(
+      eligibleSales.flatMap((sale) =>
+        (sale.invoiceLineItems ?? [])
+          .map((line) => clean(line.sku))
+      )
+    );
+
+    const catalog: CatalogRow[] = [];
+
+    for (let i = 0; i < skus.length; i += 100) {
+      const batch = skus.slice(i, i + 100);
+
+      const { data, error } = await supabase
+        .from("hike_product_index")
+        .select(
+          "sku,barcode,classification,hike_product_id"
+        )
+        .in("sku", batch)
+        .limit(1000);
+
+      if (error) throw error;
+
+      catalog.push(...(data ?? []));
+    }
+
+    const catalogBySku = new Map<string, CatalogRow[]>();
+
+    for (const row of catalog) {
+      const sku = clean(row.sku);
+      if (!sku) continue;
+
+      catalogBySku.set(sku, [
+        ...(catalogBySku.get(sku) ?? []),
+        row
+      ]);
+    }
+
+    const counts = {
+      pagesChecked,
+      salesChecked: sales.length,
+      eligibleSales: eligibleSales.length,
+      lineItemsChecked: 0,
+      approvedShoeLines: 0,
+      excludedMerchandise: 0,
+      needsClassification: 0,
+      uniqueUpcMatches: 0,
+      missingCatalogSku: 0,
+      missingCatalogBarcode: 0,
+      ambiguousCatalogBarcode: 0,
+      missingInventoryProduct: 0,
+      ambiguousInventoryProduct: 0,
+      skippedRefundedLines: 0
+    };
+
+    const samples: Record<string, unknown>[] = [];
+
+    for (const sale of eligibleSales) {
+      const storeId = outlets.get(clean(sale.outletId));
+
+      for (const line of sale.invoiceLineItems ?? []) {
+        const quantity = Number(line.quantity ?? 0);
+        const refunded = Number(
+          line.refundedQuantity ?? 0
+        );
+
+        if (
+          !Number.isSafeInteger(quantity) ||
+          quantity <= 0 ||
+          !Number.isFinite(refunded) ||
+          refunded !== 0
+        ) {
+          counts.skippedRefundedLines++;
+          continue;
+        }
+
+        counts.lineItemsChecked++;
+
+        const sku = clean(line.sku);
+        const rows = catalogBySku.get(sku) ?? [];
+
+        let result = "";
+        let barcode = "";
+        let productId: number | null = null;
+
+        if (rows.length === 0) {
+          counts.missingCatalogSku++;
+          result = "sku_not_in_catalog";
+        } else {
+          const classifications = unique(
+            rows.map((row) =>
+              clean(row.classification).toLowerCase()
+            )
+          );
+
+          const excluded = classifications.some(
+            isExcludedClassification
+          );
+
+          const approved = rows.some(
+            (row) =>
+              approvedParents.has(
+                clean(row.hike_product_id)
+              ) ||
+              approvedSkus.has(sku)
+          );
+
+          if (excluded) {
+            counts.excludedMerchandise++;
+            result = "excluded_merchandise";
+          } else if (!approved) {
+            counts.needsClassification++;
+            result = "needs_classification";
+          } else {
+            counts.approvedShoeLines++;
+
+            const barcodes = unique(
+              rows.map((row) => clean(row.barcode))
+            );
+
+            if (barcodes.length === 0) {
+              counts.missingCatalogBarcode++;
+              result = "missing_catalog_barcode";
+            } else if (barcodes.length > 1) {
+              counts.ambiguousCatalogBarcode++;
+              result = "ambiguous_catalog_barcode";
+            } else {
+              barcode = barcodes[0];
+
+              const matches =
+                productsByUpc.get(barcode) ?? [];
+
+              if (matches.length === 1) {
+                counts.uniqueUpcMatches++;
+                productId = matches[0];
+                result = "exact_upc_match";
+              } else if (matches.length > 1) {
+                counts.ambiguousInventoryProduct++;
+                result = "ambiguous_inventory_product";
+              } else {
+                counts.missingInventoryProduct++;
+                result = "inventory_product_not_loaded";
+              }
+            }
+          }
+        }
+
+        if (samples.length < 40) {
+          samples.push({
+            saleId: clean(sale.id),
+            storeId,
+            title: clean(line.title),
+            sku,
+            barcode,
+            productId,
+            result
+          });
+        }
       }
     }
 
@@ -283,7 +421,8 @@ export async function POST(request: Request) {
       liveMode: settings.live_mode,
       totalHikeSales: total,
       reachedCutoff,
-      completeScan: reachedCutoff,
+      reachedBeginning,
+      completeScan: reachedCutoff || reachedBeginning,
       counts,
       samples
     });
