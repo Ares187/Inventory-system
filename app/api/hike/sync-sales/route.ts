@@ -51,18 +51,7 @@ function unique(values: string[]): string[] {
 }
 
 function isExcludedClassification(value: string): boolean {
-  const c = value.toLowerCase();
-
-  return [
-    "non-shoe",
-    "non shoe",
-    "accessory",
-    "apparel",
-    "clothing",
-    "nutrition",
-    "electronics",
-    "merchandise"
-  ].some((term) => c.includes(term));
+  return value.trim().toLowerCase() === "ignored";
 }
 
 export async function POST(request: Request) {
