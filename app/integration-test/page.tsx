@@ -1,3 +1,4 @@
+import HikeDryRun from "./HikeDryRun";
 
 import { redirect } from "next/navigation";
 import { getLoggedInEmployee } from "../../lib/employee-session";
@@ -221,6 +222,8 @@ const event = Array.isArray(joinedEvent)
         Monitor integration activity and run
         isolated sale-processing tests.
       </p>
+
+      <HikeDryRun />
 
       <h2>Database Connection</h2>
 

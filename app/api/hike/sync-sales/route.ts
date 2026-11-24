@@ -29,6 +29,8 @@ type CatalogRow = {
   sku: string | null;
   barcode: string | null;
   classification: string | null;
+  classification_reason: string | null;
+  color: string | null;
   hike_product_id: string | null;
 };
 
@@ -100,17 +102,22 @@ export async function POST(request: Request) {
       ])
     );
 
-    const { data: products, error: productError } =
-      await supabase
+    const products: ProductRow[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await supabase
         .from("products")
         .select("id,upc")
-        .eq("active", true);
-
-    if (productError) throw productError;
+        .eq("active", true)
+        .order("id")
+        .range(offset, offset + 999);
+      if (error) throw error;
+      products.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
 
     const productsByUpc = new Map<string, number[]>();
 
-    for (const product of (products ?? []) as ProductRow[]) {
+    for (const product of products) {
       const upc = clean(product.upc);
       if (!upc) continue;
 
@@ -169,17 +176,17 @@ export async function POST(request: Request) {
     for (let i = 0; i < skus.length; i += 100) {
       const batch = skus.slice(i, i + 100);
 
-      const { data, error } = await supabase
-        .from("hike_product_index")
-        .select(
-          "sku,barcode,classification,hike_product_id"
-        )
-        .in("sku", batch)
-        .limit(1000);
-
-      if (error) throw error;
-
-      catalog.push(...(data ?? []));
+      for (let offset = 0; ; offset += 1000) {
+        const { data, error } = await supabase
+          .from("hike_product_index")
+          .select("sku,barcode,classification,classification_reason,hike_product_id,color")
+          .in("sku", batch)
+          .order("id")
+          .range(offset, offset + 999);
+        if (error) throw error;
+        catalog.push(...(data ?? []));
+        if (!data || data.length < 1000) break;
+      }
     }
 
     const catalogBySku = new Map<string, CatalogRow[]>();
@@ -251,9 +258,7 @@ export async function POST(request: Request) {
             )
           );
 
-          const excluded = classifications.some(
-            isExcludedClassification
-          );
+          const excluded = classifications.length === 1 && isExcludedClassification(classifications[0]);
 
           const approved = rows.some(
             (row) =>
@@ -266,7 +271,10 @@ export async function POST(request: Request) {
           if (excluded) {
             counts.excludedMerchandise++;
             result = "excluded_merchandise";
-          } else if (!approved) {
+          } else if (!approved || rows.some((row) =>
+            clean(row.classification).toLowerCase() !== "shoe" ||
+            row.classification_reason === "Controlled color confirmation test"
+          )) {
             counts.needsClassification++;
             result = "needs_classification";
           } else {
@@ -285,8 +293,9 @@ export async function POST(request: Request) {
             } else {
               barcode = barcodes[0];
 
-              const matches =
-                productsByUpc.get(barcode) ?? [];
+              const exactColor = /^[0-9]{12,14}$/.test(barcode) &&
+                rows.some((row) => clean(row.barcode) === barcode && clean(row.color));
+              const matches = exactColor ? productsByUpc.get(barcode) ?? [] : [];
 
               if (matches.length === 1) {
                 counts.uniqueUpcMatches++;

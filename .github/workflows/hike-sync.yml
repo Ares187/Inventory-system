@@ -1,0 +1,22 @@
+name: Hike sales sync
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: hike-production-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      HIKE_SYNC_SECRET: ${{ secrets.HIKE_SYNC_SECRET }}
+    steps:
+      - name: Import eligible Hike sales
+        if: ${{ env.HIKE_SYNC_SECRET != '' }}
+        run: |
+          curl --silent --show-error --fail-with-body --max-time 75 \
+            --header "Authorization: Bearer $HIKE_SYNC_SECRET" \
+            https://inventory-system-mu-rose.vercel.app/api/hike/scheduled-sync

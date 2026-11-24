@@ -3,119 +3,21 @@
 
 import { useEffect, useState } from "react";
 
-type Store = {
-  id: number;
-  name: string;
-};
-
-type Product = {
-  id: number;
-  gender: string;
-  brand: string;
-  model: string;
-  version: string | null;
-  size: string;
-  width: string;
-  color: string;
-};
-
-type InventoryRecord = {
-  store_id: number;
-  product_id: number;
-  quantity: number;
-};
-
 type PendingSale = {
   id: number;
   hike_sale_id: string;
-  hike_outlet_id: string;
   product_name: string;
-  sku: string;
+  store_id: number;
+  store_name: string;
   quantity: number;
   sale_date: string;
-  size: string | null;
-  width: string | null;
+  size: string;
+  width: string;
+  products: { id: number; color: string; quantity: number }[];
 };
-
-function normalize(value: unknown) {
-  return String(value ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function normalizeGender(value: unknown) {
-  const gender = normalize(value);
-
-  if (["m", "men", "mens", "male"].includes(gender)) {
-    return "m";
-  }
-
-  if (["w", "women", "womens", "female"].includes(gender)) {
-    return "w";
-  }
-
-  return gender;
-}
-
-function matchesSale(sale: PendingSale, product: Product) {
-  if (!sale.size || !sale.width) return false;
-
-  if (normalize(sale.size) !== normalize(product.size)) {
-    return false;
-  }
-
-  if (normalize(sale.width) !== normalize(product.width)) {
-    return false;
-  }
-
-  const saleName = String(sale.product_name ?? "")
-    .replace(/\s*\/\s*.*$/, "")
-    .trim();
-
-  const genderMatch = saleName.match(
-    /^(M|W|Mens|Womens|Men's|Women's)\s+/i
-  );
-
-  if (!genderMatch) return false;
-
-  const saleGender = normalizeGender(genderMatch[1]);
-
-  if (saleGender !== normalizeGender(product.gender)) {
-    return false;
-  }
-
-  const nameWithoutGender = saleName
-    .replace(/^(M|W|Mens|Womens|Men's|Women's)\s+/i, "")
-    .trim();
-
-  const productName = [
-    product.brand,
-    product.model,
-    product.version,
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  const normalizedSaleName = normalize(nameWithoutGender);
-  const normalizedProductName = normalize(productName);
-
-  // Some inventory records include the brand in the model field.
-  const modelOnly = normalize(
-    `${product.model} ${product.version ?? ""}`
-  );
-
-  return (
-    normalizedSaleName === normalizedProductName ||
-    normalizedSaleName === modelOnly
-  );
-}
 
 export default function PendingColorsPage() {
   const [sales, setSales] = useState<PendingSale[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [stores, setStores] = useState<Store[]>([]);
-  const [inventory, setInventory] = useState<InventoryRecord[]>([]);
-
   const [selected, setSelected] = useState<
     Record<number, number>
   >({});
@@ -134,27 +36,10 @@ export default function PendingColorsPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [salesResponse, inventoryResponse] =
-          await Promise.all([
-            fetch("/api/hike/pending-colors", {
-              cache: "no-store",
-            }),
-            fetch("/api/inventory", {
-              cache: "no-store",
-            }),
-          ]);
-
-        if (!salesResponse.ok || !inventoryResponse.ok) {
-          throw new Error("Unable to load pending sales");
-        }
-
-        const salesData = await salesResponse.json();
-        const inventoryData = await inventoryResponse.json();
-
-        setSales(salesData.sales ?? []);
-        setProducts(inventoryData.products ?? []);
-        setStores(inventoryData.stores ?? []);
-        setInventory(inventoryData.inventory ?? []);
+        const response = await fetch("/api/hike/pending-colors", { cache: "no-store" });
+        if (!response.ok) throw new Error("Unable to load pending sales");
+        const data = await response.json();
+        setSales(data.sales);
       } catch (err) {
         setError(
           err instanceof Error
@@ -168,16 +53,6 @@ export default function PendingColorsPage() {
 
     load();
   }, []);
-
-  function getStock(productId: number, storeId: string) {
-    const record = inventory.find(
-      (item) =>
-        String(item.product_id) === String(productId) &&
-        String(item.store_id) === String(storeId)
-    );
-
-    return Number(record?.quantity ?? 0);
-  }
 
   async function confirmColor(saleId: number) {
     const productId = selected[saleId];
@@ -216,35 +91,18 @@ export default function PendingColorsPage() {
         );
       }
 
-      // Remove successfully processed sales from the queue.
-      setSales((previous) =>
-        previous.filter((sale) => sale.id !== saleId)
-      );
-
-      // Update displayed stock after successful deduction.
-      setInventory((previous) =>
-        previous.map((item) => {
-          const sale = sales.find(
-            (entry) => entry.id === saleId
-          );
-
-          if (
-            sale &&
-            String(item.product_id) === String(productId) &&
-            String(item.store_id) ===
-              String(sale.hike_outlet_id)
-          ) {
-            return {
-              ...item,
-              quantity:
-                Number(item.quantity) -
-                Number(sale.quantity),
-            };
-          }
-
-          return item;
-        })
-      );
+      setSales((previous) => previous.filter((sale) => sale.id !== saleId).map((sale) =>
+        sale.store_id === result.storeId
+          ? {
+              ...sale,
+              products: sale.products.map((product) =>
+                product.id === productId
+                  ? { ...product, quantity: Number(result.remainingQuantity) }
+                  : product
+              ),
+            }
+          : sale
+      ));
     } catch (err) {
       setMessage((previous) => ({
         ...previous,
@@ -297,16 +155,6 @@ export default function PendingColorsPage() {
       )}
 
       {sales.map((sale) => {
-        const store = stores.find(
-          (item) =>
-            String(item.id) ===
-            String(sale.hike_outlet_id)
-        );
-
-        const matchingProducts = products.filter(
-          (product) => matchesSale(sale, product)
-        );
-
         const isConfirming = confirming === sale.id;
 
         return (
@@ -326,7 +174,7 @@ export default function PendingColorsPage() {
 
             <p>
               <strong>Store:</strong>{" "}
-              {store?.name ?? "Unknown"}
+              {sale.store_name}
               {" | "}
               <strong>Size:</strong>{" "}
               {sale.size ?? "Unknown"}
@@ -352,12 +200,6 @@ export default function PendingColorsPage() {
                 ).toLocaleString()}`}
             </p>
 
-            {matchingProducts.length === 0 ? (
-              <p style={{ color: "#b45309" }}>
-                No matching inventory variants found.
-                This sale requires manual resolution.
-              </p>
-            ) : (
               <label>
                 <strong>Color</strong>
 
@@ -387,27 +229,17 @@ export default function PendingColorsPage() {
                     Select color
                   </option>
 
-                  {matchingProducts.map((product) => {
-                    const stock = getStock(
-                      product.id,
-                      sale.hike_outlet_id
-                    );
-
-                    return (
-                      <option
-                        key={product.id}
-                        value={product.id}
-                      >
-                        {product.color ||
-                          "Unspecified"}
-                        {" — "}
-                        {stock} in stock
-                      </option>
-                    );
-                  })}
+                  {sale.products.map((product) => (
+                    <option
+                      key={product.id}
+                      value={product.id}
+                      disabled={product.quantity < sale.quantity}
+                    >
+                      {product.color} — {product.quantity} in stock
+                    </option>
+                  ))}
                 </select>
               </label>
-            )}
 
             <button
               type="button"
