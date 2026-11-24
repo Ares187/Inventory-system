@@ -2,9 +2,10 @@
 import { NextResponse } from "next/server";
 import { getLoggedInEmployee } from "../../../../lib/employee-session";
 import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
-import { hikeFetch } from "../../../../lib/hike-auth";
+import { scanHikeSales } from "../../../../lib/hike-sales-scan";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 type HikeLine = {
   id?: string | number;
@@ -41,6 +42,7 @@ type CatalogRow = {
   product_name: string | null;
   variant_name: string | null;
   classification: string | null;
+  classification_reason: string | null;
 };
 
 function str(value: unknown): string | null {
@@ -77,13 +79,11 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => ({}));
 
-    if (body.testMode !== true) {
+    const testMode = body?.testMode === true;
+    if (!testMode && body?.testMode !== false) {
       return NextResponse.json(
-        {
-          error: "Live ingestion is not enabled yet",
-          inventoryChanged: false
-        },
-        { status: 409 }
+        { error: "Select test or live ingestion explicitly" },
+        { status: 400 }
       );
     }
 
@@ -97,6 +97,13 @@ export async function POST(request: Request) {
         .single();
 
     if (settingsError) throw settingsError;
+
+    if (!testMode && (!settings.enabled || !settings.live_mode)) {
+      return NextResponse.json(
+        { error: "Live synchronization is disabled", inventoryChanged: false },
+        { status: 409 }
+      );
+    }
 
     const cutoff = validDate(settings.sales_cutoff);
 
@@ -147,38 +154,7 @@ export async function POST(request: Request) {
       .map((m) => normalized(m.shoe_name))
       .filter(Boolean);
 
-    const countResponse = await hikeFetch(
-      "https://api.hikeup.com/api/v1/sales/get_all?page_size=1"
-    );
-
-    if (!countResponse.ok) {
-      throw new Error(
-        `Hike count request failed: ${countResponse.status}`
-      );
-    }
-
-    const countData = await countResponse.json();
-    const total = Number(countData.totalCount);
-
-    if (!Number.isSafeInteger(total) || total < 0) {
-      throw new Error("Invalid Hike sales count");
-    }
-
-    const response = await hikeFetch(
-      `https://api.hikeup.com/api/v1/sales/get_all?page_size=100&skip_count=${Math.max(0, total - 100)}`
-    );
-
-    if (!response.ok) {
-      throw new Error(
-        `Hike sales request failed: ${response.status}`
-      );
-    }
-
-    const payload = await response.json();
-
-    const sales: HikeSale[] = Array.isArray(payload.items)
-      ? payload.items
-      : [];
+    const { sales } = await scanHikeSales<HikeSale>(cutoff);
 
     // Collect identifiers from eligible sales.
     const productIds = new Set<string>();
@@ -238,17 +214,21 @@ export async function POST(request: Request) {
       for (let i = 0; i < identifiers.length; i += 100) {
         const batch = identifiers.slice(i, i + 100);
 
-        const { data, error } = await supabase
-          .from("hike_product_index")
-          .select(
-            "hike_product_id,hike_variant_id,sku,barcode,product_name,variant_name,classification"
-          )
-          .in(column, batch)
-          .limit(1000);
+        for (let offset = 0; ; offset += 1000) {
+          const { data, error } = await supabase
+            .from("hike_product_index")
+            .select(
+              "hike_product_id,hike_variant_id,sku,barcode,product_name,variant_name,classification,classification_reason"
+            )
+            .in(column, batch)
+            .order("id")
+            .range(offset, offset + 999);
 
-        if (error) throw error;
+          if (error) throw error;
 
-        catalogRows.push(...(data ?? []));
+          catalogRows.push(...(data ?? []));
+          if (!data || data.length < 1000) break;
+        }
       }
     }
 
@@ -292,6 +272,8 @@ export async function POST(request: Request) {
       excludedMerchandise: 0,
       needsManualReview: 0,
       alreadyImported: 0,
+      deducted: 0,
+      skippedControlledTests: 0,
       inserted: 0,
       unresolvedCreated: 0,
       errors: 0
@@ -322,7 +304,7 @@ export async function POST(request: Request) {
 
       const outletId = str(sale.outletId);
 
-      if (!outletId || !outletMap.has(outletId)) {
+      if (!outletId || ![1, 2, 3].includes(outletMap.get(outletId) ?? -1)) {
         counts.unknownOutlet++;
         continue;
       }
@@ -334,7 +316,7 @@ export async function POST(request: Request) {
         const refunded = Number(line.refundedQuantity ?? 0);
 
         if (
-          !Number.isFinite(quantity) ||
+          !Number.isSafeInteger(quantity) ||
           quantity <= 0 ||
           !Number.isFinite(refunded) ||
           refunded !== 0
@@ -392,36 +374,30 @@ export async function POST(request: Request) {
           | "excludedMerchandise"
           | "needsManualReview";
 
-        
-const nonFootwearClassification =
-  classification.includes("non-shoe") ||
-  classification.includes("non shoe") ||
-  classification.includes("accessory") ||
-  classification.includes("apparel") ||
-  classification.includes("clothing") ||
-  classification.includes("nutrition") ||
-  classification.includes("electronics") ||
-  classification.includes("merchandise");
+        const skuMatches = sku ? bySku.get(sku) ?? [] : [];
+        const classificationRows = skuMatches.length ? skuMatches : matches;
+        if (!testMode && classificationRows.some(
+          (row) => row.classification_reason === "Controlled color confirmation test"
+        )) {
+          counts.skippedControlledTests++;
+          continue;
+        }
 
-const footwearClassification =
-  !nonFootwearClassification &&
-  (
-    classification.includes("footwear") ||
-    classification.includes("running shoe") ||
-    classification.includes("track spike") ||
-    classification.includes("racing spike")
-  );
-
-if (approved) {
-  category = "approvedShoes";
-} else if (nonFootwearClassification) {
-  category = "excludedMerchandise";
-} else if (footwearClassification) {
-  category = "missingCatalogShoes";
-} else {
-  category = "needsManualReview";
-}
-
+        if (classificationRows.length && classificationRows.every(
+          (row) => normalized(row.classification) === "ignored"
+        )) {
+          category = "excludedMerchandise";
+        } else if (classificationRows.some(
+          (row) => normalized(row.classification) !== "shoe"
+        )) {
+          category = "needsManualReview";
+        } else if (approved) {
+          category = "approvedShoes";
+        } else if (classification === "shoe") {
+          category = "missingCatalogShoes";
+        } else {
+          category = "needsManualReview";
+        }
 
         counts[category]++;
 
@@ -444,8 +420,44 @@ if (approved) {
           continue;
         }
 
-        const saleId = String(sale.id);
-        const lineId = str(line.id) ?? `index-${index}`;
+        const sourceSaleId = String(sale.id);
+        const sourceLineId = str(line.id)?.trim();
+        const saleId = testMode ? `TEST-${sourceSaleId}` : sourceSaleId;
+        const lineId = sourceLineId || `index-${index}`;
+
+        if (!testMode) {
+          if (!sourceLineId) {
+            counts.errors++;
+            if (errorSamples.length < 5) {
+              errorSamples.push(`Sale ${saleId} has a line without a stable ID`);
+            }
+            continue;
+          }
+
+          const { data, error } = await supabase.rpc("ingest_hike_live_item", {
+            p_sale_id: saleId,
+            p_line_id: sourceLineId,
+            p_outlet_id: outletId,
+            p_product_name: line.title ?? null,
+            p_sku: sku,
+            p_quantity: quantity,
+            p_sale_date: saleDate
+          });
+
+          if (error || data?.success !== true || data?.testMode === true) {
+            counts.errors++;
+            if (errorSamples.length < 5) {
+              errorSamples.push(error?.message ?? `Unexpected result for sale ${saleId}`);
+            }
+          } else if (data.result === "already_imported") {
+            counts.alreadyImported++;
+          } else {
+            counts.inserted++;
+            if (data.inventoryChanged === true) counts.deducted++;
+            if (data.result === "unresolved") counts.unresolvedCreated++;
+          }
+          continue;
+        }
 
         const record = {
           hike_sale_id: saleId,
@@ -522,15 +534,15 @@ if (approved) {
 
     return NextResponse.json({
       success: counts.errors === 0,
-      mode: "test_only",
-      testMode: true,
+      mode: testMode ? "test_only" : "live",
+      testMode,
       cutoff,
       syncEnabled: settings.enabled,
       liveMode: settings.live_mode,
       ...counts,
       samples,
       errorSamples,
-      inventoryChanged: false
+      inventoryChanged: counts.deducted > 0
     });
   } catch (error) {
     return NextResponse.json(

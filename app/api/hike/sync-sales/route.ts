@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { getLoggedInEmployee } from "../../../../lib/employee-session";
 import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
-import { hikeFetch } from "../../../../lib/hike-auth";
+import { scanHikeSales } from "../../../../lib/hike-sales-scan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -23,11 +23,6 @@ type HikeSale = {
   status?: number;
   paymentStatus?: number;
   invoiceLineItems?: HikeLine[];
-};
-
-type HikeResponse = {
-  items?: HikeSale[];
-  totalCount?: number;
 };
 
 type CatalogRow = {
@@ -144,87 +139,9 @@ export async function POST(request: Request) {
         .filter(Boolean)
     );
 
-    const countResponse = await hikeFetch(
-      "https://api.hikeup.com/api/v1/sales/get_all?page_size=1"
+    const { sales, pagesChecked, total } = await scanHikeSales<HikeSale>(
+      new Date(cutoff).toISOString()
     );
-
-    if (!countResponse.ok) {
-      throw new Error(
-        `Hike count request failed: ${countResponse.status}`
-      );
-    }
-
-    const countPayload: HikeResponse =
-      await countResponse.json();
-
-    const total = Number(countPayload.totalCount);
-
-    if (!Number.isSafeInteger(total) || total < 0) {
-      throw new Error("Invalid Hike sales count");
-    }
-
-    const pageSize = 100;
-    const maxPages = 10;
-    const sales: HikeSale[] = [];
-
-    let pagesChecked = 0;
-    let reachedCutoff = false;
-    let reachedBeginning = false;
-
-    for (let page = 0; page < maxPages; page++) {
-      const skip = Math.max(
-        0,
-        total - (page + 1) * pageSize
-      );
-
-      const remaining = total - skip;
-      if (remaining <= 0) {
-        reachedBeginning = true;
-        break;
-      }
-
-      const response = await hikeFetch(
-        "https://api.hikeup.com/api/v1/sales/get_all" +
-        `?page_size=${Math.min(pageSize, remaining)}` +
-        `&skip_count=${skip}`
-      );
-
-      if (!response.ok) {
-        throw new Error(
-          `Hike page failed: ${response.status}`
-        );
-      }
-
-      const payload: HikeResponse = await response.json();
-      const pageSales = payload.items ?? [];
-
-      pagesChecked++;
-      sales.push(...pageSales);
-
-      if (pageSales.length === 0) {
-        break;
-      }
-
-      const dated = pageSales
-        .map((sale) =>
-          Date.parse(sale.transactionDate ?? "")
-        )
-        .filter(Number.isFinite);
-
-      // Stop only when the entire page is older than cutoff.
-      if (
-        dated.length === pageSales.length &&
-        dated.every((date) => date < cutoff)
-      ) {
-        reachedCutoff = true;
-        break;
-      }
-
-      if (skip === 0) {
-        reachedBeginning = true;
-        break;
-      }
-    }
 
     const eligibleSales = sales.filter((sale) => {
       const date = Date.parse(sale.transactionDate ?? "");
@@ -409,9 +326,9 @@ export async function POST(request: Request) {
       syncEnabled: settings.enabled,
       liveMode: settings.live_mode,
       totalHikeSales: total,
-      reachedCutoff,
-      reachedBeginning,
-      completeScan: reachedCutoff || reachedBeginning,
+      reachedCutoff: true,
+      reachedBeginning: false,
+      completeScan: true,
       counts,
       samples
     });
