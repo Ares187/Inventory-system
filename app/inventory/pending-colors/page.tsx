@@ -25,6 +25,7 @@ export default function PendingColorsPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [syncWarning, setSyncWarning] = useState("");
 
   const [confirming, setConfirming] = useState<number | null>(
     null
@@ -37,10 +38,15 @@ export default function PendingColorsPage() {
   useEffect(() => {
     async function load() {
       try {
-        const response = await fetch("/api/hike/pending-colors", { cache: "no-store" });
+        const response = await fetch("/api/hike/pending-colors", {
+          method: "POST",
+          cache: "no-store",
+          headers: { "x-feldryva-refresh": "pending-colors" },
+        });
         if (!response.ok) throw new Error("Unable to load pending sales");
         const data = await response.json();
         setSales(data.sales);
+        setSyncWarning(data.syncWarning ?? "");
       } catch (err) {
         setError(
           err instanceof Error
@@ -131,6 +137,8 @@ export default function PendingColorsPage() {
         Select the color purchased through Hike.
         Test sales are protected from inventory deductions.
       </p>
+
+      {syncWarning && <p role="status">{syncWarning}</p>}
 
       {loading && (
         <p>Loading pending sales...</p>
