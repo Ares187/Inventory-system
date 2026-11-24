@@ -11,6 +11,7 @@ type PendingSale = {
   store_name: string;
   quantity: number;
   sale_date: string;
+  feldryva_received_at?: string | null;
   size: string;
   width: string;
   products: { id: number; color: string; quantity: number }[];
@@ -193,11 +194,20 @@ export default function PendingColorsPage() {
               }}
             >
               Hike Sale #{sale.hike_sale_id}
-
-              {sale.sale_date &&
-                ` | ${new Date(
-                  sale.sale_date
-                ).toLocaleString()}`}
+              <br />
+              <strong>Sold in Hike:</strong>{" "}
+              {sale.sale_date ? (
+                <time dateTime={sale.sale_date}>
+                  {new Date(sale.sale_date).toLocaleString()}
+                </time>
+              ) : "Unavailable"}
+              <br />
+              <strong>Received by Feldryva:</strong>{" "}
+              {sale.feldryva_received_at ? (
+                <time dateTime={sale.feldryva_received_at}>
+                  {new Date(sale.feldryva_received_at).toLocaleString()}
+                </time>
+              ) : "Unavailable"}
             </p>
 
               <label>
