@@ -121,7 +121,7 @@ export default function Navigation({ role }: Props) {
   }
 
   return (
-    <nav
+    <nav className="feldryva-navigation"
       style={{
         background: "var(--nav-blue)",
         borderBottom: "1px solid #315b80",

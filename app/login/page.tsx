@@ -73,7 +73,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main
+    <main className="employee-login"
       style={{
         minHeight: "100vh",
         display: "flex",
@@ -88,6 +88,7 @@ export default function LoginPage() {
         style={{
           width: "100%",
           maxWidth: "380px",
+          boxSizing: "border-box",
           background: "white",
           padding: "32px",
           borderRadius: "12px",

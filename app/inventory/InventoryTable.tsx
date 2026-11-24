@@ -172,6 +172,7 @@ export default function InventoryTable({
 
   const inputStyle: React.CSSProperties = {
     width: "100%",
+    boxSizing: "border-box",
     padding: "10px",
     border: "1px solid #d1d5db",
     borderRadius: "6px",
@@ -192,7 +193,7 @@ export default function InventoryTable({
   if (error) return <p>{error}</p>;
 
   return (
-    <div style={{ overflowX: "auto", width: "100%" }}>
+    <div className="inventory-lookup">
       <h2 style={{ fontSize: "22px", marginBottom: "20px" }}>
         Current Inventory
       </h2>
@@ -210,6 +211,7 @@ export default function InventoryTable({
         style={{
           display: "flex",
           gap: "10px",
+          flexWrap: "wrap",
           marginBottom: "20px",
         }}
       >
@@ -332,6 +334,7 @@ export default function InventoryTable({
         </button>
       </div>
 
+      <div className="inventory-table-scroll" role="region" aria-label="Stock quantities" tabIndex={0}>
       <table
         style={{
           width: "100%",
@@ -488,6 +491,7 @@ export default function InventoryTable({
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

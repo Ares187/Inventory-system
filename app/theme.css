@@ -15,3 +15,37 @@
 nav :where(a, button):focus-visible {
   outline-color: #b6d9fd;
 }
+
+.inventory-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+@media (max-width: 600px) {
+  .feldryva-navigation {
+    padding: 12px 16px !important;
+  }
+
+  .inventory-overview {
+    padding: 20px 12px !important;
+  }
+
+  .inventory-panel {
+    padding: 14px !important;
+  }
+
+  .pending-colors {
+    margin: 16px auto !important;
+    padding: 12px !important;
+  }
+
+  :is(.employee-login, .inventory-lookup, .pending-colors) :is(input, select, button) {
+    box-sizing: border-box;
+    max-width: 100%;
+    min-height: 44px;
+  }
+
+  :is(.employee-login, .inventory-lookup, .pending-colors) :is(input, select) {
+    font-size: 16px;
+  }
+}

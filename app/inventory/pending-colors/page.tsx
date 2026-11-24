@@ -124,7 +124,7 @@ export default function PendingColorsPage() {
   }
 
   return (
-    <main
+    <main className="pending-colors"
       style={{
         maxWidth: 1050,
         margin: "35px auto",

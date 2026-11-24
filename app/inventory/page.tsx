@@ -11,7 +11,7 @@ export default async function InventoryPage() {
   }
 
   return (
-    <main
+    <main className="inventory-overview"
       style={{
         minHeight: "100vh",
         background: "var(--page-blue)",
@@ -130,7 +130,7 @@ export default async function InventoryPage() {
         </section>
 
         {/* Inventory dashboard */}
-        <section
+        <section className="inventory-panel"
           style={{
             background: "#ffffff",
             border: "1px solid #e2e8f0",
