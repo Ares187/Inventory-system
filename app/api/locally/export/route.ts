@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getLoggedInEmployee } from "../../../../lib/employee-session";
 import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
-import { generateLocallyExport } from "../../../../lib/locally/export";
+import { generateLocallyExports, loadLocallyStores } from "../../../../lib/locally/export";
 
 export const dynamic = "force-dynamic";
 
@@ -44,29 +44,9 @@ export async function GET(request: NextRequest) {
 
     const db = getSupabaseAdmin();
 
-    // Verify that the store exists before recording an export.
-    const { data: store, error: storeError } = await db
-      .from("stores")
-      .select("id, active")
-      .eq("id", storeId)
-      .maybeSingle();
-
-    if (storeError) {
-      throw new Error(storeError.message);
-    }
-
+    const store = (await loadLocallyStores()).find((store) => store.id === storeId);
     if (!store) {
-      return NextResponse.json(
-        { error: "Store not found" },
-        { status: 404 }
-      );
-    }
-
-    if (!store.active) {
-      return NextResponse.json(
-        { error: "Cannot export an inactive store" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Store unavailable for Locally export" }, { status: 404 });
     }
 
     // Create a tracking record before generating the CSV.
@@ -87,15 +67,15 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-      const result = await generateLocallyExport(storeId);
+      const [result] = await generateLocallyExports([store]);
 
       // Mark CSV generation as successful.
       const { error: updateError } = await db
         .from("locally_exports")
         .update({
           status: "success",
-          product_count: result.productCount,
-          excluded_count: result.excludedCount,
+          product_count: result.ready,
+          excluded_count: result.excluded,
           completed_at: new Date().toISOString(),
         })
         .eq("id", exportRecord.id);
@@ -112,8 +92,8 @@ export async function GET(request: NextRequest) {
           "Content-Type": "text/csv; charset=utf-8",
           "Content-Disposition": `attachment; filename="locally-store-${storeId}.csv"`,
           "Cache-Control": "no-store",
-          "X-Locally-Product-Count": String(result.productCount),
-          "X-Locally-Excluded-Count": String(result.excludedCount),
+          "X-Locally-Product-Count": String(result.ready),
+          "X-Locally-Excluded-Count": String(result.excluded),
           "X-Locally-Export-Id": String(exportRecord.id),
         },
       });

@@ -3,31 +3,10 @@ import { redirect } from "next/navigation";
 import { getLoggedInEmployee } from "../../../lib/employee-session";
 import { getSupabaseAdmin } from "../../../lib/supabase-admin";
 
+import { generateLocallyExports, loadLocallyStores, locallyMappingIssue } from "../../../lib/locally/export";
+import { locallyFeedEnabled, locallyFeedPath } from "../../../lib/locally/feed";
+
 export const dynamic = "force-dynamic";
-
-type Store = {
-  id: number;
-  name: string;
-  locally_location_id: string | null;
-};
-
-type Product = {
-  id: number;
-  brand: string;
-  model: string;
-  size: string;
-  width: string;
-  color: string;
-  upc: string | null;
-  retail_price: number;
-  active: boolean;
-};
-
-type InventoryRow = {
-  store_id: number;
-  product_id: number;
-  quantity: number;
-};
 
 type ExportRecord = {
   id: number;
@@ -40,24 +19,6 @@ type ExportRecord = {
   error_message: string | null;
 };
 
-function validUpc(value: string | null) {
-  return !!value && /^[0-9]{12,14}$/.test(value.trim());
-}
-
-function getExclusionReason(product: Product | undefined) {
-  if (!product) return "Product not found";
-  if (!product.active) return "Inactive product";
-  if (!product.upc?.trim()) return "Missing UPC";
-  if (!validUpc(product.upc)) return "Invalid UPC";
-  if (
-    !Number.isFinite(Number(product.retail_price)) ||
-    Number(product.retail_price) <= 0
-  ) {
-    return "Invalid price";
-  }
-  return null;
-}
-
 export default async function LocallyDashboard() {
   const employee = await getLoggedInEmployee();
 
@@ -66,139 +27,19 @@ export default async function LocallyDashboard() {
 
   const db = getSupabaseAdmin();
 
-  const [
-    { data: stores, error: storesError },
-    { data: products, error: productsError },
-    { data: inventory, error: inventoryError },
-    { data: exports, error: exportsError },
-  ] = await Promise.all([
-    db
-      .from("stores")
-      .select("id, name, locally_location_id")
-      .eq("active", true)
-      .order("id"),
-    db
-      .from("products")
-      .select(
-        "id, brand, model, size, width, color, upc, retail_price, active"
-      ),
-    db
-      .from("inventory")
-      .select("store_id, product_id, quantity"),
-    db
-      .from("locally_exports")
-      .select(
-        "id, store_id, status, dry_run, product_count, excluded_count, created_at, error_message"
-      )
+  const [activeStores, { data: exports, error: exportsError }] = await Promise.all([
+    loadLocallyStores(),
+    db.from("locally_exports")
+      .select("id,store_id,status,dry_run,product_count,excluded_count,created_at,error_message")
       .order("created_at", { ascending: false })
       .limit(20),
   ]);
 
-  if (
-    storesError ||
-    productsError ||
-    inventoryError ||
-    exportsError
-  ) {
-    throw new Error(
-      storesError?.message ??
-        productsError?.message ??
-        inventoryError?.message ??
-        exportsError?.message ??
-        "Unable to load Locally dashboard"
-    );
-  }
-
-  const activeStores = (stores ?? []) as Store[];
-  const allProducts = (products ?? []) as Product[];
-  const inventoryRows = (inventory ?? []) as InventoryRow[];
+  if (exportsError) throw new Error(exportsError.message);
   const recentExports = (exports ?? []) as ExportRecord[];
-
-  const productMap = new Map(
-    allProducts.map((product) => [product.id, product])
-  );
-
-  const storeNames = new Map(
-    activeStores.map((store) => [store.id, store.name])
-  );
-
-  const storeStats = activeStores.map((store) => {
-    const rows = inventoryRows.filter(
-      (row) => row.store_id === store.id
-    );
-
-    let ready = 0;
-    let excluded = 0;
-    let zeroStock = 0;
-    let missingUpc = 0;
-    let invalidUpc = 0;
-    let invalidPrice = 0;
-    let inactive = 0;
-    let invalidQuantity = 0;
-
-    const exclusions: {
-      productId: number;
-      name: string;
-      reason: string;
-    }[] = [];
-
-    for (const row of rows) {
-      const product = productMap.get(row.product_id);
-      const reason = getExclusionReason(product);
-
-      const quantityValid =
-        Number.isInteger(row.quantity) &&
-        row.quantity >= 0;
-
-      if (reason || !quantityValid) {
-        excluded++;
-
-        const finalReason =
-          reason ?? "Invalid quantity";
-
-        if (finalReason === "Missing UPC") missingUpc++;
-        if (finalReason === "Invalid UPC") invalidUpc++;
-        if (finalReason === "Invalid price") invalidPrice++;
-        if (
-          finalReason === "Inactive product" ||
-          finalReason === "Product not found"
-        ) {
-          inactive++;
-        }
-        if (finalReason === "Invalid quantity") {
-          invalidQuantity++;
-        }
-
-        exclusions.push({
-          productId: row.product_id,
-          name: product
-            ? `${product.brand} ${product.model} ${product.size} ${product.width} ${product.color}`
-            : `Product ${row.product_id}`,
-          reason: finalReason,
-        });
-      } else {
-        ready++;
-
-        if (row.quantity === 0) {
-          zeroStock++;
-        }
-      }
-    }
-
-    return {
-      store,
-      total: rows.length,
-      ready,
-      excluded,
-      zeroStock,
-      missingUpc,
-      invalidUpc,
-      invalidPrice,
-      inactive,
-      invalidQuantity,
-      exclusions,
-    };
-  });
+  const storeNames = new Map(activeStores.map((store) => [store.id, store.name]));
+  const storeStats = await generateLocallyExports(activeStores);
+  const feedEnabled = locallyFeedEnabled();
 
   const totals = storeStats.reduce(
     (acc, stats) => ({
@@ -211,7 +52,7 @@ export default async function LocallyDashboard() {
   );
 
   const unmappedStores = activeStores.filter(
-    (store) => !store.locally_location_id?.trim()
+    (store) => locallyMappingIssue(store, activeStores) !== null
   ).length;
 
   const cardStyle: React.CSSProperties = {
@@ -237,7 +78,9 @@ export default async function LocallyDashboard() {
 
       <p>
         Store-specific inventory readiness and dry-run exports.
-        No inventory is currently being sent to Locally.
+        {" "}{feedEnabled
+          ? "Hosted feed enabled. Confirm ingestion in the Locally account."
+          : "Hosted feed disabled."}
       </p>
 
       <h2>Overall Readiness</h2>
@@ -318,9 +161,7 @@ export default async function LocallyDashboard() {
                 <td style={cellStyle}>{stats.excluded}</td>
                 <td style={cellStyle}>{stats.zeroStock}</td>
                 <td style={cellStyle}>
-                  {stats.store.locally_location_id?.trim()
-                    ? "Mapped"
-                    : "Not mapped"}
+                  {locallyMappingIssue(stats.store, activeStores) ?? "Mapped"}
                 </td>
                 <td style={cellStyle}>
                   <a
@@ -362,13 +203,7 @@ export default async function LocallyDashboard() {
             {stats.store.name}: {stats.excluded} excluded
           </summary>
 
-          <p>
-            Missing UPC: {stats.missingUpc} | Invalid UPC:{" "}
-            {stats.invalidUpc} | Invalid price:{" "}
-            {stats.invalidPrice} | Inactive/missing product:{" "}
-            {stats.inactive} | Invalid quantity:{" "}
-            {stats.invalidQuantity}
-          </p>
+          <p>{stats.blockingExclusions} stocked or invalid-quantity rows block publication.</p>
 
           {stats.exclusions.length === 0 ? (
             <p>All stocked variants are export-ready.</p>
@@ -431,6 +266,7 @@ export default async function LocallyDashboard() {
             <th style={{ ...cellStyle, textAlign: "left" }}>
               Locally Location ID
             </th>
+            <th style={{ ...cellStyle, textAlign: "left" }}>Hosted feed</th>
           </tr>
         </thead>
         <tbody>
@@ -441,12 +277,18 @@ export default async function LocallyDashboard() {
                 {store.locally_location_id ??
                   "Not configured"}
               </td>
+              <td style={cellStyle}>
+                {feedEnabled && !locallyMappingIssue(store, activeStores) && locallyFeedPath(store) ? (
+                  <a href={locallyFeedPath(store) ?? undefined} rel="noreferrer">Open private feed URL</a>
+                ) : "Unavailable"}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
 
       <h2>Recent Exports</h2>
+      <p>A hosted response records a download request. Locally reports ingestion in its retailer portal.</p>
 
       <div style={{ overflowX: "auto" }}>
         <table
@@ -491,7 +333,7 @@ export default async function LocallyDashboard() {
                 </td>
                 <td style={cellStyle}>
                   {record.status}
-                  {record.dry_run ? " (dry run)" : ""}
+                  {record.dry_run ? " (dry run)" : " (hosted response)"}
                 </td>
                 <td style={cellStyle}>
                   {record.product_count}
