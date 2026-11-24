@@ -103,8 +103,8 @@ export default function Navigation({ role }: Props) {
   return (
     <nav
       style={{
-        background: "#0f172a",
-        borderBottom: "1px solid #1e293b",
+        background: "var(--nav-blue)",
+        borderBottom: "1px solid #315b80",
         padding: "14px 28px",
         display: "flex",
         alignItems: "center",
@@ -122,10 +122,10 @@ export default function Navigation({ role }: Props) {
           fontWeight: 750,
           letterSpacing: "-0.5px",
           textDecoration: "none",
-          whiteSpace: "nowrap",
+          overflowWrap: "anywhere",
         }}
       >
-        Sneaker Factory
+        Feldryva - Sneaker Factory
       </Link>
 
       <div ref={menuRef} style={{ position: "relative" }}>
@@ -136,7 +136,7 @@ export default function Navigation({ role }: Props) {
           aria-controls="main-navigation-menu"
           onClick={() => setOpen((previous) => !previous)}
           style={{
-            background: open ? "#334155" : "transparent",
+            background: open ? "var(--action-blue)" : "transparent",
             border: "1px solid #475569",
             borderRadius: 8,
             color: "white",
@@ -158,7 +158,7 @@ export default function Navigation({ role }: Props) {
               right: 0,
               width: 240,
               maxWidth: "calc(100vw - 40px)",
-              background: "#0f172a",
+              background: "var(--nav-blue)",
               border: "1px solid #334155",
               borderRadius: 10,
               padding: 8,
@@ -183,9 +183,9 @@ export default function Navigation({ role }: Props) {
                     display: "block",
                     padding: "12px 14px",
                     borderRadius: 7,
-                    color: active ? "#ffffff" : "#cbd5e1",
+                    color: active ? "#ffffff" : "#d8e8f8",
                     background: active
-                      ? "#334155"
+                      ? "var(--action-blue)"
                       : "transparent",
                     fontSize: 14,
                     fontWeight: active ? 700 : 500,

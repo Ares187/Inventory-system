@@ -79,7 +79,7 @@ export default function LoginPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f3f4f6",
+        background: "var(--page-blue)",
         padding: "20px",
       }}
     >
@@ -170,7 +170,7 @@ export default function LoginPage() {
             width: "100%",
             padding: "14px",
             marginTop: "28px",
-            background: "#111827",
+            background: "var(--action-blue)",
             color: "white",
             border: "none",
             borderRadius: "6px",

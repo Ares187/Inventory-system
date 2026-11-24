@@ -25,9 +25,17 @@ function normalizeVersion(value: string): string {
 
 function parseModel(
   model: string,
+  brand: string,
   version?: string | null
 ): { name: string; version: string } {
-  const combined = `${model} ${version ?? ""}`.trim();
+  const name = brand === "newbalance"
+    ? model.trim().replace(/^fresh[\s-]+foam(?:[\s-]+x\b)?[\s-]+/i, "")
+    : model.trim();
+  const separateVersion = normalizeVersion((version ?? "").trim());
+  const embeddedVersion = name.match(/v(\d+)$/i)?.[1];
+  const combined = embeddedVersion && normalizeVersion(embeddedVersion) === separateVersion
+    ? name
+    : `${name} ${version ?? ""}`.trim();
 
   const match = combined.match(
     /^(.*?)(?:\s*[- ]?\s*v?(\d+))$/i
@@ -53,6 +61,7 @@ export function matchApprovedModel(
   const recognizedBrand = normalize(recognized.brand);
   const recognizedModel = parseModel(
     recognized.model,
+    recognizedBrand,
     recognized.version
   );
 
@@ -63,6 +72,7 @@ export function matchApprovedModel(
 
     const catalogModel = parseModel(
       approved.model,
+      recognizedBrand,
       approved.version
     );
 

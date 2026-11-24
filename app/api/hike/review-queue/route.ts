@@ -35,6 +35,8 @@ export async function GET() {
         )
       `)
       .eq("status", "unresolved")
+      .eq("test_mode", false)
+      .not("hike_sale_id", "like", "TEST-%")
       .order("sale_date", { ascending: false })
       .limit(500);
 

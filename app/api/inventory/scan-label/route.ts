@@ -68,7 +68,10 @@ Rules:
 - Normalize B/Medium women's width to Regular.
 - Normalize D/Medium men's width to Regular.
 - Preserve the manufacturer's color description.
-- Model and version must identify the exact shoe.
+- Read the model name even when the label starts with a cushioning or marketing name.
+- For New Balance "Fresh Foam X 860v15", return brand "New Balance", model "860", and version "15". Fresh Foam X is cushioning branding.
+- Keep distinguishing model words such as Trail, Elite, or GTX. Use printed model names over style codes.
+- Use the primary US size and gender printed on the label when a secondary conversion is also shown.
 - Never invent missing values.
 - UPC must be read from the retail barcode or its printed digits.
 - UPC-A contains 12 digits; EAN-13 contains 13 digits.
@@ -76,7 +79,8 @@ Rules:
 - Combine all digits belonging to the same barcode in their printed order.
 - Never use manufacturer style codes, SKUs, or color codes as the UPC.
 - Codes containing letters are not UPCs.
-- If the barcode digits cannot be read confidently, return null for upc.- If any field is uncertain, return null for that field.
+- If the barcode digits cannot be read confidently, return null for upc.
+- If any field is uncertain, return null for that field.
 - Return exactly one shoe label.
 - Do not guess a UPC from unclear barcode lines.
 - Return JSON only.`,

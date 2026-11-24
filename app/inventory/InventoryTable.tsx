@@ -340,8 +340,8 @@ export default function InventoryTable({
           fontSize: "14px",
         }}
       >
-        <thead>
-          <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
+        <thead style={{ background: "var(--surface-blue)", color: "var(--ink-blue)" }}>
+          <tr style={{ borderBottom: "2px solid var(--border-blue)" }}>
             {[
               "Gender",
               "Brand",

@@ -301,7 +301,7 @@ export default function ReceiveApprovedStock() {
             padding: "16px",
             border: "1px solid #d1d5db",
             borderRadius: "8px",
-            background: "#f9fafb",
+            background: "var(--surface-blue)",
           }}
         >
           <strong>Scan Box Label</strong>
@@ -512,7 +512,7 @@ export default function ReceiveApprovedStock() {
           }
           style={{
             padding: "12px 20px",
-            background: "#111827",
+            background: "var(--action-blue)",
             color: "white",
             border: "none",
             borderRadius: "6px",

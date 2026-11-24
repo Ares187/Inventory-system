@@ -1,5 +1,6 @@
 
 import type { ReactNode } from "react";
+import "./theme.css";
 import Navigation from "./Navigation";
 import { getLoggedInEmployee } from "../lib/employee-session";
 
@@ -16,8 +17,8 @@ export default async function Layout({
         style={{
           margin: 0,
           fontFamily: "Arial, sans-serif",
-          background: "#f5f7fa",
-          color: "#172334",
+          background: "var(--page-blue)",
+          color: "var(--ink-blue)",
         }}
       >
         {employee && <Navigation role={employee.role} />}

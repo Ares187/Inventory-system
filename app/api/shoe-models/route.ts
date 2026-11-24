@@ -51,7 +51,7 @@ function parseModel(body: Record<string, unknown>) {
 }
 
 // Get approved shoe models
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const employee = await getLoggedInEmployee();
 
@@ -64,12 +64,18 @@ export async function GET() {
 
     const supabase = getSupabaseAdmin();
 
-    const { data, error } = await supabase
+    const includeInactive = new URL(request.url).searchParams.get("manage") === "1";
+    if (includeInactive && !canManageCatalog(employee.role)) {
+      return NextResponse.json({ error: "Manager access required" }, { status: 403 });
+    }
+
+    const query = supabase
       .from("shoe_models")
       .select("id, brand, model, version, retail_price, active")
-      .eq("active", true)
       .order("brand")
       .order("model");
+
+    const { data, error } = await (includeInactive ? query : query.eq("active", true));
 
     if (error) throw error;
 
@@ -188,6 +194,22 @@ export async function PATCH(request: Request) {
         { error: "Invalid shoe model ID" },
         { status: 400 }
       );
+    }
+
+    if (typeof body.active === "boolean") {
+      const { data, error } = await getSupabaseAdmin()
+        .from("shoe_models")
+        .update({ active: body.active })
+        .eq("id", id)
+        .select("id")
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) {
+        return NextResponse.json({ error: "Shoe model not found" }, { status: 404 });
+      }
+
+      return NextResponse.json({ success: true });
     }
 
     const parsed = parseModel(body);

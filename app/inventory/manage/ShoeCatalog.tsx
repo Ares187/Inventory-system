@@ -10,6 +10,7 @@ type ShoeModel = {
   model: string;
   version: string | null;
   retail_price: number;
+  active: boolean;
 };
 
 type ModelForm = {
@@ -78,7 +79,7 @@ export default function ShoeCatalog() {
 
   const loadModels = useCallback(async () => {
     try {
-      const response = await fetch("/api/shoe-models", {
+      const response = await fetch("/api/shoe-models?manage=1", {
         cache: "no-store",
       });
 
@@ -195,6 +196,29 @@ export default function ShoeCatalog() {
     }
   }
 
+  async function changeVerification(shoe: ShoeModel) {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/shoe-models", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: shoe.id, active: !shoe.active }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to change verification");
+      await loadModels();
+      setMessage(shoe.active ? "Model removed from verified receiving." : "Model verified for receiving.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to change verification");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const filteredModels = models.filter((shoe) => {
     const query = search.toLowerCase().trim();
 
@@ -221,14 +245,14 @@ export default function ShoeCatalog() {
         }}
       >
         {[
-          { label: "Approved Models", value: models.length },
+          { label: "Approved Models", value: models.filter((shoe) => shoe.active).length },
           { label: "Brands", value: brandCount },
         ].map((stat) => (
           <div
             key={stat.label}
             style={{
               padding: "18px",
-              background: "#f8fafc",
+              background: "var(--surface-blue)",
               border: "1px solid #e2e8f0",
               borderRadius: "10px",
             }}
@@ -323,8 +347,8 @@ export default function ShoeCatalog() {
             style={{
               ...buttonStyle,
               marginTop: "18px",
-              background: "#0f172a",
-              borderColor: "#0f172a",
+              background: "var(--action-blue)",
+              borderColor: "var(--action-blue)",
               color: "#ffffff",
               padding: "12px 18px",
               opacity: saving ? 0.6 : 1,
@@ -386,7 +410,7 @@ export default function ShoeCatalog() {
                 margin: "0 0 5px",
               }}
             >
-              Approved Shoe Models
+              Shoe Models
             </h2>
 
             <p
@@ -396,7 +420,7 @@ export default function ShoeCatalog() {
                 margin: 0,
               }}
             >
-              View and edit approved running shoe models.
+              Unverified models are hidden from receiving. Existing stock stays in inventory.
             </p>
           </div>
 
@@ -429,7 +453,7 @@ export default function ShoeCatalog() {
               fontSize: "14px",
             }}
           >
-            <thead style={{ background: "#f8fafc" }}>
+            <thead style={{ background: "var(--surface-blue)" }}>
               <tr>
                 {[
                   "Brand",
@@ -503,9 +527,9 @@ export default function ShoeCatalog() {
                             onClick={saveEdit}
                             style={{
                               ...buttonStyle,
-                              background: "#0f172a",
+                              background: "var(--action-blue)",
                               color: "#ffffff",
-                              borderColor: "#0f172a",
+                              borderColor: "var(--action-blue)",
                             }}
                           >
                             {saving ? "Saving..." : "Save"}
@@ -564,6 +588,15 @@ export default function ShoeCatalog() {
                           style={buttonStyle}
                         >
                           Edit
+                        </button>
+                        {" "}
+                        <button
+                          type="button"
+                          disabled={saving || editing !== null}
+                          onClick={() => void changeVerification(shoe)}
+                          style={buttonStyle}
+                        >
+                          {shoe.active ? "Remove Verification" : "Verify Again"}
                         </button>
                       </td>
                     </>

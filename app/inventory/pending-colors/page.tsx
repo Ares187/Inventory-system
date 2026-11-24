@@ -258,7 +258,7 @@ export default function PendingColorsPage() {
                 background:
                   selected[sale.id] &&
                   confirming === null
-                    ? "#2563eb"
+                    ? "var(--action-blue)"
                     : "#94a3b8",
                 color: "white",
                 cursor:

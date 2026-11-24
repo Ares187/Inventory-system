@@ -1,0 +1,17 @@
+:root {
+  --nav-blue: #173958;
+  --action-blue: #235b91;
+  --ink-blue: #182f45;
+  --page-blue: #f2f6fb;
+  --surface-blue: #eaf2fa;
+  --border-blue: #c0d4e8;
+}
+
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 2px solid #3979b7;
+  outline-offset: 3px;
+}
+
+nav :where(a, button):focus-visible {
+  outline-color: #b6d9fd;
+}

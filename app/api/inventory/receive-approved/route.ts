@@ -352,6 +352,18 @@ export async function POST(request: Request) {
 
     const db = getSupabaseAdmin();
 
+    const { data: approvedModel, error: modelError } = await db
+      .from("shoe_models")
+      .select("id")
+      .eq("id", shoeModelId)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (modelError) throw modelError;
+    if (!approvedModel) {
+      return NextResponse.json({ error: "Choose a verified shoe model" }, { status: 400 });
+    }
+
     // Existing stock-receiving operation.
     const { data, error } = await db.rpc(
       "receive_approved_shoe",

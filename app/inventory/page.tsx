@@ -14,7 +14,7 @@ export default async function InventoryPage() {
     <main
       style={{
         minHeight: "100vh",
-        background: "#f8fafc",
+        background: "var(--page-blue)",
         padding: "36px 24px",
         color: "#0f172a",
       }}
@@ -37,7 +37,7 @@ export default async function InventoryPage() {
               fontWeight: 700,
               letterSpacing: "1.5px",
               textTransform: "uppercase",
-              color: "#64748b",
+              color: "var(--action-blue)",
               margin: "0 0 8px",
             }}
           >
