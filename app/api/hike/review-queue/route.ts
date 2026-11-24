@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { getLoggedInEmployee } from "../../../../lib/employee-session";
 import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
 
+function requiresClassification(reason: string) {
+  return reason.startsWith("Product classification") ||
+    reason === "SKU requires classification review";
+}
+
 export const dynamic = "force-dynamic";
 
 export async function GET() {
@@ -18,37 +23,21 @@ export async function GET() {
 
     const supabase = getSupabaseAdmin();
 
-    const { data, error } = await supabase
-      .from("hike_sale_items")
-      .select(`
-        id,
-        hike_sale_id,
-        hike_outlet_id,
-        product_name,
-        sku,
-        quantity,
-        sale_date,
-        status,
-        test_mode,
-        hike_unresolved_sales (
-          reason
-        )
-      `)
-      .eq("status", "unresolved")
-      .eq("test_mode", false)
-      .not("hike_sale_id", "like", "TEST-%")
-      .order("sale_date", { ascending: false })
-      .limit(500);
+    const { data, error } = await supabase.rpc("get_hike_review_items");
 
     if (error) throw error;
 
-    const items = (data ?? []).map((item) => {
-      const unresolved = item.hike_unresolved_sales;
-
-      const reason = Array.isArray(unresolved)
-        ? unresolved[0]?.reason ?? ""
-        : (unresolved as { reason?: string } | null)?.reason ?? "";
-
+    const items = ((data ?? []) as {
+      id: number;
+      hike_sale_id: string;
+      hike_outlet_id: string;
+      product_name: string | null;
+      sku: string | null;
+      quantity: number;
+      sale_date: string | null;
+      test_mode: boolean;
+      reason: string;
+    }[]).map((item) => {
       return {
         id: item.id,
         saleId: item.hike_sale_id,
@@ -58,7 +47,7 @@ export async function GET() {
         quantity: item.quantity,
         saleDate: item.sale_date,
         testMode: item.test_mode,
-        reason
+        reason: item.reason
       };
     });
 
@@ -69,11 +58,11 @@ export async function GET() {
     const other = items.filter(
       (item) =>
         !item.reason.startsWith("Approved shoe") &&
-        !item.reason.startsWith("Product classification")
+        !requiresClassification(item.reason)
     );
 
     const classification = items.filter((item) =>
-      item.reason.startsWith("Product classification")
+      requiresClassification(item.reason)
     );
 
     return NextResponse.json({

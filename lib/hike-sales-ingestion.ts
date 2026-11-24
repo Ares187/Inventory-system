@@ -76,6 +76,11 @@ export async function ingestHikeSales(testMode: boolean, scheduled: boolean) {
 
     if (settingsError) throw settingsError;
 
+    if (!testMode) {
+      const { error } = await supabase.rpc("expire_pending_hike_colors");
+      if (error) throw new Error(error.message);
+    }
+
     if (!testMode && (!settings.enabled || !settings.live_mode)) {
       if (scheduled) return NextResponse.json({ skipped: "Live sync is disabled" });
       return NextResponse.json(

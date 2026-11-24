@@ -63,6 +63,7 @@ function categoryFor(action: string) {
 function readableAction(action: string) {
   const labels: Record<string, string> = {
     "integration.sale_applied": "Sale processed",
+    "integration.color_confirmation_expired": "Hike color confirmation expired",
     "integration.sale_failed": "Sale failed",
     "integration.retry_requested": "Retry requested",
     "employee.created": "Employee created",
@@ -192,6 +193,10 @@ function ActivityDescription({
     return (
       <div>
         <strong>{heading}</strong>
+
+        {activity.action === "integration.color_confirmation_expired" && (
+          <div style={{ marginTop: "5px", color: "#991b1b" }}>{activity.description}</div>
+        )}
 
         {metadata?.provider !== undefined && (
           <div style={{ marginTop: "5px" }}>

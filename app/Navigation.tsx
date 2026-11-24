@@ -14,6 +14,7 @@ export default function Navigation({ role }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [pendingColorCount, setPendingColorCount] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const links = [
@@ -47,6 +48,25 @@ export default function Navigation({ role }: Props) {
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const controller = new AbortController();
+    setPendingColorCount(0);
+    void fetch("/api/hike/pending-colors?count=1", {
+      cache: "no-store",
+      signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) return;
+      const { count } = await response.json();
+      if (!controller.signal.aborted && Number.isSafeInteger(count)) {
+        setPendingColorCount(count);
+      }
+    }).catch(() => {});
+
+    return () => controller.abort();
+  }, [open]);
 
   useEffect(() => {
     function handleOutsideClick(event: MouseEvent) {
@@ -194,6 +214,23 @@ export default function Navigation({ role }: Props) {
                   }}
                 >
                   {link.label}
+                  {link.href === "/inventory/pending-colors" && pendingColorCount > 0 && (
+                    <span
+                      aria-label={`${pendingColorCount} sales awaiting color confirmation`}
+                      style={{
+                        marginLeft: 8,
+                        padding: "2px 7px",
+                        borderRadius: 12,
+                        background: "#b91c1c",
+                        color: "#fff",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {pendingColorCount}
+                    </span>
+                  )}
                 </Link>
               );
             })}
