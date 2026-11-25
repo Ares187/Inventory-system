@@ -36,6 +36,7 @@ export async function GET() {
       .select(
         "id,gender,brand,model,version,size,width,color,upc,shoe_model_id,retail_price"
       )
+      .eq("active", true)
       .order("brand")
       .order("model")
       .order("size"),
@@ -209,4 +210,34 @@ export async function PATCH(request: NextRequest) {
       { status: 400 }
     );
   }
+}
+
+export async function DELETE(request: NextRequest) {
+  const employee = await getLoggedInEmployee();
+  if (!employee) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isManager(employee.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const body = await request.json().catch(() => null);
+  const id = body?.id;
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return NextResponse.json({ error: "Invalid variant ID" }, { status: 400 });
+  }
+
+  const { data, error } = await getSupabaseAdmin().rpc("archive_empty_product_variant", {
+    p_product_id: id,
+  });
+  if (error) {
+    console.error("Variant deletion failed:", error.message);
+    return NextResponse.json({ error: "Unable to delete variant" }, { status: 500 });
+  }
+  if (data === false) {
+    return NextResponse.json(
+      { error: "This variant still has stock. Correct its quantity to zero at every store before deleting." },
+      { status: 409 }
+    );
+  }
+
+  return NextResponse.json({ success: true });
 }

@@ -103,7 +103,23 @@ export default function InventoryTable({
     };
   }, [refreshKey]);
 
+  const visibleStores =
+    selectedStore === "all"
+      ? stores
+      : stores.filter(
+          (store) => String(store.id) === selectedStore
+        );
+
+  const visibleStoreIds = new Set(visibleStores.map((store) => store.id));
+  const inStockProductIds = new Set(
+    inventory
+      .filter((item) => item.quantity > 0 && visibleStoreIds.has(item.store_id))
+      .map((item) => item.product_id)
+  );
+
   const filteredProducts = products.filter((product) => {
+    if (!inStockProductIds.has(product.id)) return false;
+
     const searchableText = [
       product.gender,
       product.brand,
@@ -150,13 +166,6 @@ export default function InventoryTable({
         product.version ?? "",
       ].join("|")
   );
-
-  const visibleStores =
-    selectedStore === "all"
-      ? stores
-      : stores.filter(
-          (store) => String(store.id) === selectedStore
-        );
 
   const activeStore =
     selectedStore !== "all" && visibleStores.length === 1

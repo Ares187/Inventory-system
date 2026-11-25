@@ -122,6 +122,33 @@ export default function ProductVariants() {
     });
   }, []);
 
+  async function deleteVariant(product: Product) {
+    if (saving || !window.confirm(
+      `Delete ${product.brand} ${product.model}, size ${product.size}, ${product.width}, ${product.color}?`
+    )) return;
+
+    setSaving(true);
+    setMessage("");
+    setIsError(false);
+
+    try {
+      const response = await fetch("/api/product-variants", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: product.id }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Unable to delete variant");
+      setProducts((current) => current.filter((item) => item.id !== product.id));
+      setMessage("Variant deleted.");
+    } catch (error) {
+      setIsError(true);
+      setMessage(error instanceof Error ? error.message : "Unable to delete variant");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function beginEdit(product: Product) {
     setEditingId(product.id);
     setUpc(product.upc ?? "");
@@ -519,14 +546,24 @@ export default function ProductVariants() {
                           </button>
                         </div>
                       ) : (
-                        <button
-                          type="button"
-                          disabled={saving || editingId !== null}
-                          onClick={() => beginEdit(product)}
-                          style={buttonStyle}
-                        >
-                          Edit
-                        </button>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            disabled={saving || editingId !== null}
+                            onClick={() => beginEdit(product)}
+                            style={buttonStyle}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            disabled={saving || editingId !== null}
+                            onClick={() => void deleteVariant(product)}
+                            style={{ ...buttonStyle, color: "#b91c1c" }}
+                          >
+                            Delete
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
