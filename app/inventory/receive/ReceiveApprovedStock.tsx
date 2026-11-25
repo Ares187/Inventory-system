@@ -29,6 +29,28 @@ type ScanResult = RecognizedShoe & {
   upc?: string | null;
 };
 
+function normalizeScannedWidth(width: unknown, gender: string): string {
+  if (typeof width !== "string") return "";
+
+  const words: Record<string, string> = {
+    narrow: "Narrow",
+    standard: "Regular",
+    regular: "Regular",
+    medium: "Regular",
+    wide: "Wide",
+    extrawide: "Extra Wide",
+  };
+  const code = width.toLowerCase().trim().replace(/[\s-]+/g, "");
+  if (Object.hasOwn(words, code)) return words[code];
+
+  const widthsByGender: Record<string, Record<string, string>> = {
+    Men: { b: "Narrow", d: "Regular", "2e": "Wide", ee: "Wide", "4e": "Extra Wide", eeee: "Extra Wide" },
+    Women: { "2a": "Narrow", aa: "Narrow", b: "Regular", d: "Wide", "2e": "Extra Wide", ee: "Extra Wide" },
+  };
+  const widths = widthsByGender[gender];
+  return widths && Object.hasOwn(widths, code) ? widths[code] : "";
+}
+
 export default function ReceiveApprovedStock() {
   const [models, setModels] = useState<ShoeModel[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
@@ -150,13 +172,10 @@ export default function ReceiveApprovedStock() {
           ? shoe.gender
           : "";
 
-      const width =
-        shoe.width === "Narrow" ||
-        shoe.width === "Regular" ||
-        shoe.width === "Wide" ||
-        shoe.width === "Extra Wide"
-          ? shoe.width
-          : "";
+      const scannedSize = shoe.size == null ? "" : String(shoe.size).trim();
+      const sizeWithWidth = /^(\d+(?:\.\d+)?)\s*(2A|AA|B|D|2E|EE|4E|EEEE)$/i.exec(scannedSize);
+      const width = normalizeScannedWidth(shoe.width, gender) ||
+        normalizeScannedWidth(sizeWithWidth?.[2], gender);
 
       // UPC is provisional until checked against the barcode.
       const upc =
@@ -169,8 +188,7 @@ export default function ReceiveApprovedStock() {
         ...previous,
         shoe_model_id: matched ? String(matched.id) : "",
         gender,
-        size:
-          shoe.size != null ? String(shoe.size) : "",
+        size: sizeWithWidth?.[1] ?? scannedSize,
         width,
         color:
           typeof shoe.color === "string"
