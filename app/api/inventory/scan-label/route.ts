@@ -1,7 +1,60 @@
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { inspectShoeLabel, readPrintedGtin } from "../../../../lib/shoe-label-image";
 import { getLoggedInEmployee } from "../../../../lib/employee-session";
+import { getSupabaseAdmin } from "../../../../lib/supabase-admin";
+
+async function findSavedShoe(upc: string) {
+  try {
+    const db = getSupabaseAdmin();
+    const gtin = upc.padStart(14, "0");
+    // UPC-A and its zero-padded EAN/GTIN forms can identify the same variant.
+    const barcodes = [gtin, gtin.slice(1), gtin.slice(2)].filter(
+      (candidate) => candidate.padStart(14, "0") === gtin
+    );
+    const { data: variants, error: variantError } = await db
+      .from("products")
+      .select("upc,shoe_model_id,gender,size,width,color")
+      .eq("active", true)
+      .in("upc", barcodes)
+      .limit(2);
+
+    if (variantError) throw variantError;
+    if (variants?.length !== 1) return null;
+
+    const variant = variants[0];
+    if (!variant.shoe_model_id || !variant.size || !variant.width || !variant.color ||
+        !["Men", "Women", "Unisex"].includes(variant.gender)) {
+      return null;
+    }
+
+    const { data: model, error: modelError } = await db
+      .from("shoe_models")
+      .select("id,brand,model,version")
+      .eq("id", variant.shoe_model_id)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (modelError) throw modelError;
+    if (!model) return null;
+
+    return {
+      approvedModelId: model.id,
+      brand: model.brand,
+      model: model.model,
+      version: model.version,
+      gender: variant.gender,
+      size: variant.size,
+      width: variant.width,
+      color: variant.color,
+      upc: variant.upc,
+    };
+  } catch (error) {
+    console.warn("Saved shoe lookup failed:", error);
+    return null;
+  }
+}
 
 export async function POST(request: Request) {
   try {
@@ -34,6 +87,17 @@ export async function POST(request: Request) {
       );
     }
 
+    const bytes = Buffer.from(await image.arrayBuffer());
+    const label = await inspectShoeLabel(bytes).catch((error: unknown) => {
+      console.warn("Barcode image processing failed:", error);
+      return null;
+    });
+
+    if (label) {
+      const saved = await findSavedShoe(label.upc);
+      if (saved) return NextResponse.json({ success: true, shoe: saved });
+    }
+
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
         { error: "Image recognition is not configured" },
@@ -41,10 +105,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const bytes = Buffer.from(await image.arrayBuffer());
-    const dataUrl =
-      `data:${image.type};base64,${bytes.toString("base64")}`;
-
+    const dataUrl = `data:${image.type};base64,${bytes.toString("base64")}`;
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
     });
@@ -61,12 +122,12 @@ export async function POST(request: Request) {
 Return a JSON object containing:
 brand, model, version, gender, size, width, color, upc.
 
-Read these fields independently from the main label and its box:
+Read these fields independently from the main label and its box. If a second image is supplied, it is a closer view of the same photo. Use it to read small print while keeping the full photo for context:
 - UPC: Read the printed digits next to the main retail barcode, including any outer digits and leading zeros. Digits may be vertical or separated by spaces. Return them as a string. Exclude supplemental barcodes, QR codes, and style codes. If the retail barcode digits are unreadable, return null.
-- Color: Copy the printed color name verbatim. If only a clearly marked colorway code is printed, return that code (for example SCCG in HOKA style/color "1176572 / SCCG"). Do not infer color from the shoe illustration.
+- Color: Copy the printed color name verbatim, including components separated by slashes. It may be in small type below the style number. If only a clearly marked colorway code is printed, return that code (for example SCCG in HOKA style/color "1176572 / SCCG"). Do not infer color from the shoe illustration.
 - Brand, model, version: Keep model qualifiers such as Trail, Elite, and GTX. "M CLIFTON 11" is Hoka, Clifton, 11. "Fresh Foam X 860v15" is New Balance, 860, 15. Do not substitute a style code for the model.
 - Gender and size: Return Men, Women, or Unisex and the primary US size. A secondary size conversion does not mean Unisex.
-- Width: Copy the explicit word (such as Wide) or printed code (such as D or 2E). For a combined size like 7.5D, return size 7.5 and width D. W next to a women's icon indicates Women.
+- Width: Return the explicit word when present, otherwise the printed code (such as D or 2E). For "MEDIUM / B", return "Medium". For a combined size like 7.5D, return size 7.5 and width D. W next to a women's icon indicates Women.
 Ignore adjacent labels. Return null only for the individual field that is missing or unreadable.
 Return JSON only.`,
         },
@@ -84,6 +145,13 @@ Return JSON only.`,
                 detail: "high",
               },
             },
+            ...(label ? [{
+              type: "image_url" as const,
+              image_url: {
+                url: `data:image/jpeg;base64,${label.crop.toString("base64")}`,
+                detail: "high" as const,
+              },
+            }] : []),
           ],
         },
       ],
@@ -96,10 +164,12 @@ Return JSON only.`,
     }
 
     const result = JSON.parse(content);
-    console.log("SCANNED SHOE DATA:", result);
+    // Prefer the barcode read directly from its bars.
+    const upc = label?.upc ?? readPrintedGtin(result.upc);
+    const saved = !label && upc ? await findSavedShoe(upc) : null;
     return NextResponse.json({
       success: true,
-      shoe: result,
+      shoe: saved ?? { ...result, upc, approvedModelId: null },
     });
   } catch (error) {
     console.error("Shoe label scanning failed:", error);

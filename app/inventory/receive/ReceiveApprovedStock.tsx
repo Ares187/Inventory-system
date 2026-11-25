@@ -22,6 +22,7 @@ type Store = {
 };
 
 type ScanResult = RecognizedShoe & {
+  approvedModelId?: number | null;
   gender?: string | null;
   size?: string | number | null;
   width?: string | null;
@@ -40,15 +41,19 @@ function normalizeScannedWidth(width: unknown, gender: string): string {
     wide: "Wide",
     extrawide: "Extra Wide",
   };
-  const code = width.toLowerCase().trim().replace(/[\s-]+/g, "");
-  if (Object.hasOwn(words, code)) return words[code];
+  const parts = width.toLowerCase().split("/").map(
+    (part) => part.trim().replace(/[\s-]+/g, "")
+  );
+  const word = parts.find((part) => Object.hasOwn(words, part));
+  if (word) return words[word];
 
   const widthsByGender: Record<string, Record<string, string>> = {
     Men: { b: "Narrow", d: "Regular", "2e": "Wide", ee: "Wide", "4e": "Extra Wide", eeee: "Extra Wide" },
     Women: { "2a": "Narrow", aa: "Narrow", b: "Regular", d: "Wide", "2e": "Extra Wide", ee: "Extra Wide" },
   };
   const widths = widthsByGender[gender];
-  return widths && Object.hasOwn(widths, code) ? widths[code] : "";
+  const code = widths && parts.find((part) => Object.hasOwn(widths, part));
+  return code ? widths[code] : "";
 }
 
 export default function ReceiveApprovedStock() {
@@ -152,18 +157,12 @@ export default function ReceiveApprovedStock() {
         throw new Error("Invalid scan result");
       }
 
-      const matched =
-        typeof shoe.brand === "string" &&
-        typeof shoe.model === "string"
-          ? matchApprovedModel(
-              {
-                brand: shoe.brand,
-                model: shoe.model,
-                version: shoe.version,
-              },
-              models
-            )
-          : null;
+      const savedModel = models.find((model) => model.id === shoe.approvedModelId);
+      const matched = savedModel ?? (
+        typeof shoe.brand === "string" && typeof shoe.model === "string"
+          ? matchApprovedModel(shoe, models)
+          : null
+      );
 
       const gender =
         shoe.gender === "Men" ||
@@ -184,6 +183,8 @@ export default function ReceiveApprovedStock() {
       const upc = /^\d{12,14}$/.test(printedUpc) ? printedUpc : "";
       const color = typeof shoe.color === "string" ? shoe.color.trim() : "";
       const unreadFields = [
+        ...(!gender ? ["gender"] : []),
+        ...(!scannedSize ? ["size"] : []),
         ...(!width ? ["width"] : []),
         ...(!color ? ["color"] : []),
         ...(!upc ? ["UPC"] : []),
@@ -201,7 +202,8 @@ export default function ReceiveApprovedStock() {
 
       if (matched) {
         setScanMessage(
-          `Matched approved model: ${matched.brand} ` +
+          (shoe.approvedModelId ? "Filled from saved variant: " : "Matched approved model: ") +
+          `${matched.brand} ` +
           `${matched.model} ${matched.version ?? ""}. ` +
           (unreadFields.length
             ? `Check the label for ${unreadFields.join(", ")} before receiving.`
