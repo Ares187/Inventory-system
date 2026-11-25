@@ -61,34 +61,14 @@ export async function POST(request: Request) {
 Return a JSON object containing:
 brand, model, version, gender, size, width, color, upc.
 
-Rules:
-- Use only information visible on the main shoe box and its label. Ignore adjacent boxes and partial labels.
-- Read the brand from the main box logo or model line. Report the model family without the brand or a leading M/W gender marker.
-- Read all visible fields independently so an unclear barcode never prevents returning a legible model.
-- Use US shoe size, not UK or EUR.
-- Gender must be Men, Women, or Unisex.
-- Return width as Narrow, Regular, Wide, Extra Wide, or null if unmarked or unclear. Prefer explicit width words.
-- Decode a width attached to the US size: HOKA men's 7.5D is size 7.5, Regular. Women's D is Wide. Women's B and men's D are Regular; men's 2E is Wide and men's 4E is Extra Wide. Use the shoe's primary gender for width interpretation.
-- A W beside a women's icon (as on On packaging) indicates Women, not Wide. A sizing conversion for the opposite gender does not make the shoe Unisex.
-- Preserve the manufacturer's color description.
-- Read the model name even when the label starts with a cushioning or marketing name.
-- For New Balance "Fresh Foam X 860v15", return brand "New Balance", model "860", and version "15". Fresh Foam X is cushioning branding.
-- For HOKA "M CLIFTON 11", return brand "Hoka", model "Clifton", and version "11". Use the model number printed alongside the name and keep it out of the model field when also providing version.
-- "NIKE VOMERO 18" is Nike, Vomero, version 18. "MIZUNO NEO ZEN 2" is Mizuno, Neo Zen, version 2.
-- Keep distinguishing model words such as Trail, Elite, or GTX. Use printed model names over style codes.
-- Use the primary US size and gender printed on the label when a secondary conversion is also shown.
-- Never invent missing values.
-- UPC must be read from the retail barcode or its printed digits.
-- UPC-A contains 12 digits; EAN-13 contains 13 digits.
-- Barcode digits may be printed vertically or separated into groups.
-- Combine all digits belonging to the same retail barcode in printed order, including the outer digits and leading zeros. Exclude supplemental barcode digits and QR/RFID markings.
-- Never use manufacturer style codes, SKUs, or color codes as the UPC.
-- Codes containing letters are not UPCs.
-- If the barcode digits cannot be read confidently, return null for upc.
-- If any field is uncertain, return null for that field.
-- Return exactly one shoe label.
-- Do not guess a UPC from unclear barcode lines.
-- Return JSON only.`,
+Read these fields independently from the main label and its box:
+- UPC: Read the printed digits next to the main retail barcode, including any outer digits and leading zeros. Digits may be vertical or separated by spaces. Return them as a string. Exclude supplemental barcodes, QR codes, and style codes. If the retail barcode digits are unreadable, return null.
+- Color: Copy the printed color name verbatim. If only a clearly marked colorway code is printed, return that code (for example SCCG in HOKA style/color "1176572 / SCCG"). Do not infer color from the shoe illustration.
+- Brand, model, version: Keep model qualifiers such as Trail, Elite, and GTX. "M CLIFTON 11" is Hoka, Clifton, 11. "Fresh Foam X 860v15" is New Balance, 860, 15. Do not substitute a style code for the model.
+- Gender and size: Return Men, Women, or Unisex and the primary US size. A secondary size conversion does not mean Unisex.
+- Width: Copy the explicit word (such as Wide) or printed code (such as D or 2E). For a combined size like 7.5D, return size 7.5 and width D. W next to a women's icon indicates Women.
+Ignore adjacent labels. Return null only for the individual field that is missing or unreadable.
+Return JSON only.`,
         },
         {
           role: "user",

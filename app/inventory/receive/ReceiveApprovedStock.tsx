@@ -177,12 +177,17 @@ export default function ReceiveApprovedStock() {
       const width = normalizeScannedWidth(shoe.width, gender) ||
         normalizeScannedWidth(sizeWithWidth?.[2], gender);
 
-      // UPC is provisional until checked against the barcode.
-      const upc =
-        typeof shoe.upc === "string" &&
-        /^\d{12,14}$/.test(shoe.upc)
-          ? shoe.upc
-          : "";
+      // Printed barcode digits may be returned in groups.
+      const printedUpc = typeof shoe.upc === "string"
+        ? shoe.upc.trim().replace(/[\s-]+/g, "")
+        : "";
+      const upc = /^\d{12,14}$/.test(printedUpc) ? printedUpc : "";
+      const color = typeof shoe.color === "string" ? shoe.color.trim() : "";
+      const unreadFields = [
+        ...(!width ? ["width"] : []),
+        ...(!color ? ["color"] : []),
+        ...(!upc ? ["UPC"] : []),
+      ];
 
       setForm((previous) => ({
         ...previous,
@@ -190,10 +195,7 @@ export default function ReceiveApprovedStock() {
         gender,
         size: sizeWithWidth?.[1] ?? scannedSize,
         width,
-        color:
-          typeof shoe.color === "string"
-            ? shoe.color
-            : "",
+        color,
         upc,
       }));
 
@@ -201,7 +203,9 @@ export default function ReceiveApprovedStock() {
         setScanMessage(
           `Matched approved model: ${matched.brand} ` +
           `${matched.model} ${matched.version ?? ""}. ` +
-          "Review all fields, especially the UPC, before receiving."
+          (unreadFields.length
+            ? `Check the label for ${unreadFields.join(", ")} before receiving.`
+            : "Review all fields, especially the UPC, before receiving.")
         );
       } else {
         setScanMessage(
