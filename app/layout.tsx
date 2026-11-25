@@ -23,6 +23,16 @@ export default async function Layout({
       >
         {employee && <Navigation role={employee.role} />}
         {children}
+        <footer
+          style={{
+            padding: "8px 16px 12px",
+            textAlign: "center",
+            fontSize: 11,
+            color: "#64748b",
+          }}
+        >
+          © Evan Feldman
+        </footer>
       </body>
     </html>
   );

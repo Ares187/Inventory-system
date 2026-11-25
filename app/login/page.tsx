@@ -1,6 +1,7 @@
 
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type Employee = {
@@ -194,6 +195,9 @@ export default function LoginPage() {
             {message}
           </p>
         )}
+        <p style={{ textAlign: "center", margin: "20px 0 0" }}>
+          <Link href="/terms" style={{ color: "var(--action-blue)" }}>Terms and Conditions</Link>
+        </p>
       </form>
     </main>
   );
